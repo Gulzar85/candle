@@ -1,0 +1,7 @@
+Hi there,
+
+{{ inviter_name }} has invited you to connect and share a private space on Candle. Visit the link below to accept. This link expires in {{ expires_hours }} hours.
+
+{{ accept_url }}
+
+The invitation is private and only for you. If you weren't expecting this, you can safely ignore this email.

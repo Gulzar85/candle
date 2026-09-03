@@ -2,8 +2,15 @@
   "name": "Candle",
   "short_name": "Candle",
   "description": "A private, collaborative partner whiteboard.",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "service_worker": {
+    "src": "/sw.js",
+    "scope": "/",
+    "update_via_cache": "none"
+  },
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "orientation": "any",

@@ -1,0 +1,5 @@
+Hi,
+
+{{ partner_name }} declined your invitation to connect on Candle.
+
+No problem — you're always welcome to invite someone else when you're ready.

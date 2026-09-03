@@ -1,0 +1,17 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-16 h-16 rounded-full bg-muted mx-auto mb-4">
+    <i data-lucide="shield-alert" class="w-8 h-8 text-muted-foreground" aria-hidden="true"></i>
+  </div>
+  <h1 class="text-xl font-semibold tracking-tight">Invitation not found</h1>
+  <p class="text-sm text-muted-foreground mt-3">
+    This invitation link is invalid or has already been used.
+  </p>
+  <a href="{% url 'core:home' %}"
+     class="mt-6 inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+    Go to Candle
+  </a>
+</div>
+{% endblock auth_content %}

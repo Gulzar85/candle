@@ -1,0 +1,26 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-12 h-12 rounded-full bg-success/10 mx-auto mb-4">
+    <i data-lucide="mail-check" class="w-6 h-6 text-success" aria-hidden="true"></i>
+  </div>
+  <h1 class="text-xl font-semibold tracking-tight mb-1">Check your email</h1>
+  <p class="text-sm text-muted-foreground mb-4">
+    We sent a verification link to
+    <span class="font-medium text-foreground">{{ email }}</span>.
+    Click the link in that email to confirm your address.
+  </p>
+  <p class="text-xs text-muted-foreground mb-6">
+    The link expires in 24 hours. You'll need to verify before signing in.
+  </p>
+  <a href="{% url 'accounts:login' %}"
+     class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+    Go to sign in
+  </a>
+  <p class="mt-4 text-sm text-muted-foreground">
+    Didn't get it?
+    <a href="{% url 'accounts:resend_verification' %}" class="font-medium text-primary hover:underline">Resend the link</a>
+  </p>
+</div>
+{% endblock %}

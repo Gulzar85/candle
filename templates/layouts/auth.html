@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="min-h-dvh w-full flex flex-col items-center justify-center px-4 py-10 bg-background">
+  <div class="w-full max-w-sm">
+    <a href="{% url 'core:home' %}" class="flex items-center justify-center gap-2.5 mb-8" aria-label="Candle home">
+      <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-primary">
+        <i data-lucide="flame" class="w-5 h-5 text-primary-foreground" aria-hidden="true"></i>
+      </div>
+      <span class="text-xl font-semibold tracking-tight">Candle</span>
+    </a>
+
+    {% include "components/_messages.html" %}
+
+    <div class="bg-card border border-border rounded-xl shadow-2 p-6 sm:p-8">
+      {% block auth_content %}{% endblock %}
+    </div>
+
+    <p class="mt-6 text-center text-sm text-muted-foreground">
+      &copy; {% now "Y" %} Candle
+    </p>
+  </div>
+</div>
+{% endblock %}

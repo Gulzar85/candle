@@ -1,0 +1,53 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<h1 class="text-xl font-semibold tracking-tight mb-1">Create your account</h1>
+<p class="text-sm text-muted-foreground mb-6">A private space for you and one special partner.</p>
+
+<form method="post" action="{% url 'accounts:register' %}" novalidate>
+  {% csrf_token %}
+
+  <div class="space-y-4">
+    {% include "accounts/_field.html" with field=form.email %}
+    <div class="grid grid-cols-2 gap-3">
+      {% include "accounts/_field.html" with field=form.first_name %}
+      {% include "accounts/_field.html" with field=form.last_name %}
+    </div>
+    {% include "accounts/_field.html" with field=form.display_name %}
+    {% include "accounts/_field.html" with field=form.password1 %}
+    {% include "accounts/_field.html" with field=form.password2 %}
+    <div>
+      <label class="flex items-start gap-3 cursor-pointer">
+        {{ form.terms }}
+        <span class="text-sm text-muted-foreground">{{ form.terms.label }}</span>
+      </label>
+      {% for error in form.terms.errors %}
+      <p class="mt-1 text-sm text-danger flex items-center gap-1.5">
+        <i data-lucide="alert-circle" class="w-4 h-4 shrink-0" aria-hidden="true"></i> {{ error }}
+      </p>
+      {% endfor %}
+    </div>
+    {% if form.non_field_errors %}
+    <div class="space-y-1">
+      {% for error in form.non_field_errors %}
+      <p class="text-sm text-danger flex items-center gap-1.5">
+        <i data-lucide="alert-circle" class="w-4 h-4 shrink-0" aria-hidden="true"></i> {{ error }}
+      </p>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="mt-6">
+    <button type="submit"
+            class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+      Create account
+    </button>
+  </div>
+</form>
+
+<p class="mt-6 text-center text-sm text-muted-foreground">
+  Already have an account?
+  <a href="{% url 'accounts:login' %}" class="font-medium text-primary hover:underline">Sign in</a>
+</p>
+{% endblock %}

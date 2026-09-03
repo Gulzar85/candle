@@ -1,6 +1,14 @@
+{% if image_url %}
+<img
+  src="{{ image_url }}"
+  alt=""
+  aria-label="{{ name }}"
+  class="avatar object-cover {% if size == 'sm' %}w-8 h-8{% elif size == 'lg' %}w-14 h-14{% else %}w-10 h-10{% endif %}"
+>
+{% else %}
 <div
   aria-label="{{ name }}"
-  class="inline-flex items-center justify-center bg-muted text-muted-foreground rounded-full {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
+  class="avatar {% if tone == 'primary' %}bg-primary text-primary-foreground{% endif %} {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
 >
   {% if initials %}
   {{ initials }}
@@ -8,3 +16,4 @@
   <i data-lucide="user" class="{% if size == 'sm' %}w-4 h-4{% elif size == 'lg' %}w-7 h-7{% else %}w-5 h-5{% endif %}"></i>
   {% endif %}
 </div>
+{% endif %}

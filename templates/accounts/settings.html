@@ -1,0 +1,87 @@
+{% extends "layouts/shell.html" %}
+
+{% block content %}
+{% include "components/_messages.html" %}
+
+<div class="px-4 lg:px-6 py-6 max-w-2xl">
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight">Account &amp; security</h1>
+    <p class="text-sm text-muted-foreground mt-1">Manage your email, password, and session.</p>
+  </header>
+
+  <div class="space-y-6">
+    {# Email #}
+    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="email-heading">
+      <h2 id="email-heading" class="font-semibold mb-4">Email address</h2>
+      <div class="flex items-center justify-between gap-4 mb-4">
+        <div>
+          <p class="text-sm font-medium">{{ user.email }}</p>
+          <p class="text-xs text-muted-foreground">
+            {% if user.email_verified %}
+            <span class="inline-flex items-center gap-1 text-success"><i data-lucide="badge-check" class="w-3.5 h-3.5" aria-hidden="true"></i> Verified</span>
+            {% else %}
+            <span class="inline-flex items-center gap-1 text-warning"><i data-lucide="alert-triangle" class="w-3.5 h-3.5" aria-hidden="true"></i> Not verified</span>
+            {% endif %}
+          </p>
+        </div>
+      </div>
+      {% if user.email_pending %}
+      <div class="rounded-lg bg-muted p-3 text-sm text-muted-foreground mb-4">
+        A confirmation link will be sent to <span class="font-medium text-foreground">{{ user.email_pending }}</span>.
+      </div>
+      {% endif %}
+      <form method="post" action="{% url 'accounts:email_change_request' %}" novalidate>
+        {% csrf_token %}
+        <div class="space-y-3">
+          {% if email_change_form %}
+            {% include "accounts/_field.html" with field=email_change_form.new_email %}
+          {% endif %}
+          <button type="submit"
+                  class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+            Change email
+          </button>
+        </div>
+      </form>
+    </section>
+
+    {# Security #}
+    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="security-heading">
+      <h2 id="security-heading" class="font-semibold mb-4">Security</h2>
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="text-sm font-medium">Password</p>
+          <p class="text-xs text-muted-foreground">Last changed via a secure reset or change flow.</p>
+        </div>
+        <a href="{% url 'accounts:password_change' %}"
+           class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+          Change password
+        </a>
+      </div>
+    </section>
+
+    {# Session #}
+    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="session-heading">
+      <h2 id="session-heading" class="font-semibold mb-4">Session</h2>
+      <div class="flex flex-wrap items-center gap-3">
+        <form method="post" action="{% url 'accounts:logout' %}" novalidate>
+          {% csrf_token %}
+          <button type="submit"
+                  class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+            <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i>
+            Sign out
+          </button>
+        </form>
+        <form method="post" action="{% url 'accounts:logout_all_devices' %}" novalidate>
+          {% csrf_token %}
+          <button type="submit"
+                  class="inline-flex items-center justify-center gap-2 rounded-lg bg-danger text-danger-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-danger/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+            <i data-lucide="shield" class="w-4 h-4" aria-hidden="true"></i>
+            Sign out everywhere
+          </button>
+        </form>
+      </div>
+      <p class="text-xs text-muted-foreground mt-3">Sign out of this browser only, or from every device and browser at once.</p>
+    </section>
+  </div>
+</div>
+{% endblock content %}

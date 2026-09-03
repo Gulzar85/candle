@@ -1,0 +1,7 @@
+Hi {{ user.get_short_name }},
+
+Thanks for creating a Candle account. Please confirm your email address by visiting the link below. This link expires in {{ expires_hours }} hours.
+
+{{ verify_url }}
+
+If you didn't create this account, you can safely ignore this email.

@@ -1,0 +1,178 @@
+{% extends "layouts/shell.html" %}
+
+{% block content %}
+{% include "components/_messages.html" %}
+
+<div class="max-w-5xl mx-auto px-4 lg:px-6 py-6 lg:py-8">
+  <header class="mb-8 flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight">
+        {% if profile.display_name %}Welcome back, <span class="text-primary">{{ profile.display_name }}</span>{% else %}Welcome back{% endif %}
+      </h1>
+      <p class="text-sm text-muted-foreground mt-2">Your creative space awaits</p>
+    </div>
+  </header>
+
+  {% if active_partnership and whiteboard %}
+  <div class="bg-gradient-to-br from-primary/5 to-accent/5 border border-primary/20 rounded-2xl card-pad mb-8 relative overflow-hidden">
+    <div class="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full -mr-16 -mt-16 blur-2xl" aria-hidden="true"></div>
+    <div class="relative">
+      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+        <div class="flex items-start gap-4 min-w-0">
+          <div class="flex items-center justify-center w-14 h-14 rounded-xl bg-primary/20 text-primary shrink-0 shadow-lg">
+            <i data-lucide="pen" class="w-7 h-7" aria-hidden="true"></i>
+          </div>
+          <div class="min-w-0 mt-1">
+            <h2 class="text-xl font-bold truncate text-foreground">{{ whiteboard.title }}</h2>
+            <p class="text-sm text-muted-foreground mt-0.5 truncate">
+              {% if partner_name %}<i data-lucide="users" class="w-3.5 h-3.5 inline mr-1" aria-hidden="true"></i>Drawing with <span class="font-medium text-foreground">{{ partner_name }}</span>{% else %}Your shared board{% endif %}
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <a href="{{ whiteboard_url }}" class="btn-primary">
+            <i data-lucide="arrow-right" class="w-4 h-4" aria-hidden="true"></i>
+            {% if whiteboard.is_archived %}View{% elif whiteboard.version > 0 %}Open{% else %}Start{% endif %}
+          </a>
+          {% if not whiteboard.is_archived %}
+          <a href="{{ whiteboard_url }}" class="btn-outline p-2.5" aria-label="Open board to rename" title="Rename board">
+            <i data-lucide="pencil-line" class="w-4 h-4" aria-hidden="true"></i>
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-3 pt-4 border-t border-primary/20">
+        <div class="bg-background/40 rounded-lg p-3">
+          <dt class="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Strokes</dt>
+          <dd class="mt-2 text-lg font-bold text-foreground">{{ whiteboard.version }}</dd>
+        </div>
+        <div class="bg-background/40 rounded-lg p-3">
+          <dt class="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Last activity</dt>
+          <dd class="mt-2 text-lg font-bold text-foreground">
+            {% if whiteboard.last_operation_at %}
+              <span class="text-sm">{{ whiteboard.last_operation_at|timesince }}</span>
+            {% else %}
+              <span class="text-sm text-muted-foreground">—</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="bg-background/40 rounded-lg p-3">
+          <dt class="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Status</dt>
+          <dd class="mt-2">
+            {% if whiteboard.is_archived %}
+            {% include "components/badge.html" with label="Archived" variant="outline" %}
+            {% else %}
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block w-2 h-2 rounded-full bg-success animate-pulse" aria-hidden="true"></span>
+              <span class="text-sm font-semibold text-success">Active</span>
+            </div>
+            {% endif %}
+          </dd>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-4 border-t border-primary/20 flex gap-3">
+        <form method="post" action="{% url 'whiteboard:whiteboard_archive_toggle' public_id=active_partnership.public_id %}" class="flex-1">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{% url 'accounts:dashboard' %}">
+          {% if whiteboard.is_archived %}
+          <input type="hidden" name="action" value="unarchive">
+          <button type="submit" class="w-full text-sm font-medium text-primary hover:text-primary/80 transition-colors flex items-center justify-center gap-1.5">
+            <i data-lucide="undo-2" class="w-4 h-4" aria-hidden="true"></i>
+            Restore board
+          </button>
+          {% else %}
+          <input type="hidden" name="action" value="archive">
+          <button type="submit" class="w-full text-sm text-muted-foreground hover:text-danger transition-colors flex items-center justify-center gap-1.5"
+                  onclick="return confirm('Archive this board? It becomes read-only for both of you until restored.');">
+            <i data-lucide="archive" class="w-4 h-4" aria-hidden="true"></i>
+            Archive board
+          </button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% elif pending_partnership %}
+  <div class="bg-gradient-to-br from-warning/10 to-transparent border border-warning/30 rounded-2xl card-pad mb-8 relative overflow-hidden">
+    <div class="absolute top-0 right-0 w-32 h-32 bg-warning/5 rounded-full -mr-16 -mt-16 blur-2xl" aria-hidden="true"></div>
+    <div class="relative">
+      <div class="flex items-start gap-4">
+        <div class="flex items-center justify-center w-14 h-14 rounded-xl bg-warning/20 text-warning shrink-0 shadow-lg">
+          <i data-lucide="hourglass" class="w-7 h-7 animate-spin" aria-hidden="true"></i>
+        </div>
+        <div class="min-w-0 mt-1">
+          <h2 class="text-lg font-bold text-foreground">Waiting for your partner</h2>
+          <p class="text-sm text-muted-foreground mt-1">
+            Your invitation is pending
+            {% if pending_partner_name %}<span class="font-medium text-foreground">to {{ pending_partner_name }}</span>{% endif %}.
+            Once they accept, you can start creating together.
+          </p>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <a href="{% url 'partnerships:partnership_home' %}" class="btn-outline inline-flex items-center gap-2">
+          <i data-lucide="check-circle-2" class="w-4 h-4" aria-hidden="true"></i>
+          View invitation
+        </a>
+        <a href="{% url 'accounts:profile' %}" class="btn-ghost">Edit profile</a>
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="bg-gradient-to-br from-primary/5 via-accent/5 to-transparent border border-primary/20 rounded-2xl card-pad mb-8 relative overflow-hidden">
+    <div class="absolute top-0 right-0 w-40 h-40 bg-primary/10 rounded-full -mr-20 -mt-20 blur-3xl" aria-hidden="true"></div>
+    <div class="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div class="flex items-start gap-4 min-w-0">
+        <div class="flex items-center justify-center w-14 h-14 rounded-xl bg-primary/20 text-primary shrink-0 shadow-lg">
+          <i data-lucide="heart-handshake" class="w-7 h-7" aria-hidden="true"></i>
+        </div>
+        <div class="min-w-0 mt-1">
+          <h2 class="text-lg font-bold text-foreground">Candle is made for two.</h2>
+          <p class="text-sm text-muted-foreground mt-1">Invite one partner and unlock your creative space together.</p>
+        </div>
+      </div>
+      <a href="{% url 'partnerships:partnership_home' %}" class="btn-primary shrink-0 inline-flex items-center gap-2">
+        <i data-lucide="user-plus" class="w-4 h-4" aria-hidden="true"></i>
+        Invite partner
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="mb-6 mt-8">
+    <h3 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">Quick access</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <a href="{% url 'partnerships:partnership_home' %}"
+         class="group card card-pad hover:border-primary/50 hover:bg-muted/50 transition-all">
+        <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 text-primary mb-3 group-hover:bg-primary/20 transition-colors">
+          <i data-lucide="link" class="w-5 h-5" aria-hidden="true"></i>
+        </div>
+        <h3 class="font-semibold text-sm text-foreground">Partnership</h3>
+        <p class="text-xs text-muted-foreground mt-1">Invite, manage, and view your connection.</p>
+      </a>
+
+      <a href="{% url 'accounts:profile' %}"
+         class="group card card-pad hover:border-primary/50 hover:bg-muted/50 transition-all">
+        <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-accent/10 text-accent mb-3 group-hover:bg-accent/20 transition-colors">
+          <i data-lucide="user" class="w-5 h-5" aria-hidden="true"></i>
+        </div>
+        <h3 class="font-semibold text-sm text-foreground">Profile</h3>
+        <p class="text-xs text-muted-foreground mt-1">Update your name, avatar, and preferences.</p>
+      </a>
+
+      <a href="{% url 'accounts:settings' %}"
+         class="group card card-pad hover:border-primary/50 hover:bg-muted/50 transition-all">
+        <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-warning/10 text-warning mb-3 group-hover:bg-warning/20 transition-colors">
+          <i data-lucide="lock" class="w-5 h-5" aria-hidden="true"></i>
+        </div>
+        <h3 class="font-semibold text-sm text-foreground">Security</h3>
+        <p class="text-xs text-muted-foreground mt-1">Manage email, password, and account settings.</p>
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock content %}

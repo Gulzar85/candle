@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block extra_css %}
+<style {% csp_nonce_attr %}>
+  /* The whiteboard takes the whole viewport; the body must not scroll. */
+  .wb-shell { min-height: 100dvh; }
+  .wb-save-dot { transition: background-color 0.3s ease; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="wb-shell flex flex-col bg-background">
+
+  {# -- Toolbar ----------------------------------------------------------- #}
+  <header class="relative flex items-center justify-between gap-3 px-3 h-14 border-b border-border bg-card shrink-0 select-none pt-[env(safe-area-inset-top)] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
+    <div class="flex items-center gap-1 sm:gap-2">
+      <button type="button" id="wb-btn-pen" data-wb-tool="pen"
+              class="wb-icon-btn wb-tool-btn" aria-pressed="true" aria-label="Draw"
+              title="Draw (P)">
+        <i data-lucide="pen" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-btn-eraser" data-wb-tool="eraser"
+              class="wb-icon-btn wb-tool-btn" aria-pressed="false" aria-label="Erase"
+              title="Erase (E)">
+        <i data-lucide="eraser" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-btn-select" data-wb-tool="select"
+              class="wb-icon-btn wb-tool-btn" aria-pressed="false" aria-label="Select / Pan"
+              title="Select (V)">
+        <i data-lucide="mouse-pointer-2" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <div class="w-px h-6 bg-border mx-1" aria-hidden="true"></div>
+      <button type="button" id="wb-delete" class="wb-icon-btn text-muted-foreground disabled:opacity-40 disabled:pointer-events-none"
+              aria-label="Delete selected" title="Delete selected (Del)" disabled>
+        <i data-lucide="trash-2" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-undo" class="wb-icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)">
+        <i data-lucide="undo-2" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-redo" class="wb-icon-btn" aria-label="Redo" title="Redo (Ctrl+Y)">
+        <i data-lucide="redo-2" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-clear" class="wb-icon-btn text-danger" aria-label="Clear board"
+              title="Clear board (Ctrl+Shift+X)">
+        <i data-lucide="spray-can" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="min-w-0 flex-1 flex justify-center px-2">
+      <button type="button" id="wb-title"
+              data-wb-title="{{ whiteboard.title|default:'Shared board' }}"
+              data-wb-api-base="/api/whiteboards/{{ partnership.public_id }}"
+              class="max-w-full truncate rounded-md px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              title="Rename board">{{ whiteboard.title }}</button>
+    </div>
+
+    <div class="flex items-center gap-1 sm:gap-2">
+      <button type="button" id="wb-zoom-out" class="wb-icon-btn" aria-label="Zoom out" title="Zoom out">
+        <i data-lucide="zoom-out" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-zoom-reset" class="px-2 h-9 rounded-md text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors hidden sm:inline-flex"
+              aria-label="Reset zoom" title="Reset zoom (100%)">100%</button>
+      <button type="button" id="wb-zoom-in" class="wb-icon-btn" aria-label="Zoom in" title="Zoom in">
+        <i data-lucide="zoom-in" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <button type="button" id="wb-fit" class="wb-icon-btn" aria-label="Fit to view" title="Fit to view">
+        <i data-lucide="maximize" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+      <div class="w-px h-6 bg-border mx-1" aria-hidden="true"></div>
+
+      {# Stroke style: color / width / opacity — one popover, reachable on every breakpoint. #}
+      <div class="relative">
+        <button type="button" id="wb-settings" class="wb-icon-btn" aria-label="Stroke style" title="Stroke style"
+                aria-haspopup="true" aria-controls="wb-style-popover" aria-expanded="false">
+          <i data-lucide="palette" class="w-5 h-5" aria-hidden="true"></i>
+        </button>
+        <div id="wb-style-popover" role="dialog" aria-label="Stroke style"
+             class="hidden absolute right-0 top-full mt-2 z-30 w-56 rounded-xl border border-border bg-popover text-popover-foreground shadow-3 p-3">
+          <p class="text-xs font-medium text-muted-foreground mb-2">Color</p>
+          <div class="flex items-center gap-1.5 flex-wrap" aria-label="Stroke palette">
+            <button type="button" data-wb-color="#2563eb" class="wb-color-swatch w-7 h-7 rounded-full ring-2 ring-offset-1 ring-primary" style="background:#2563eb" aria-label="Blue"></button>
+            <button type="button" data-wb-color="#dc2626" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#dc2626" aria-label="Red"></button>
+            <button type="button" data-wb-color="#16a34a" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#16a34a" aria-label="Green"></button>
+            <button type="button" data-wb-color="#d97706" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#d97706" aria-label="Amber"></button>
+            <button type="button" data-wb-color="#7c3aed" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#7c3aed" aria-label="Violet"></button>
+            <button type="button" data-wb-color="#171717" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#171717" aria-label="Near-black"></button>
+          </div>
+          <label for="wb-width" class="flex items-center justify-between text-xs font-medium text-muted-foreground mt-4 mb-1.5">
+            <span>Width</span><span id="wb-width-label">3px</span>
+          </label>
+          <input type="range" id="wb-width" min="1" max="24" value="3" step="1" class="w-full">
+          <label for="wb-opacity" class="flex items-center justify-between text-xs font-medium text-muted-foreground mt-4 mb-1.5">
+            <span>Opacity</span><span id="wb-opacity-label">100%</span>
+          </label>
+          <input type="range" id="wb-opacity" min="10" max="100" value="100" step="5" class="w-full">
+        </div>
+      </div>
+
+      <button type="button" id="wb-help" class="wb-icon-btn hidden sm:inline-flex" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"
+              aria-haspopup="dialog" aria-controls="wb-help-dialog">
+        <i data-lucide="keyboard" class="w-5 h-5" aria-hidden="true"></i>
+      </button>
+    </div>
+  </header>
+
+  {# -- Keyboard shortcut help dialog -------------------------------------- #}
+  <div id="wb-help-dialog" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4"
+       role="dialog" aria-modal="true" aria-labelledby="wb-help-title">
+    <div class="w-full max-w-sm rounded-xl border border-border bg-popover text-popover-foreground shadow-3 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 id="wb-help-title" class="text-sm font-semibold">Keyboard shortcuts</h2>
+        <button type="button" data-help-close class="wb-icon-btn" aria-label="Close">
+          <i data-lucide="x" class="w-4 h-4" aria-hidden="true"></i>
+        </button>
+      </div>
+      <dl class="space-y-1.5 text-sm">
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Pen / Eraser / Select</dt><dd class="font-mono text-xs">P · E · V</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Delete selection</dt><dd class="font-mono text-xs">Del / Backspace</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Cancel selection</dt><dd class="font-mono text-xs">Esc</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Undo / Redo</dt><dd class="font-mono text-xs">Ctrl+Z · Ctrl+Shift+Z</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Clear board</dt><dd class="font-mono text-xs">Ctrl+Shift+X</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Pan</dt><dd class="font-mono text-xs">Space / Ctrl+drag</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">Zoom</dt><dd class="font-mono text-xs">Ctrl+wheel</dd></div>
+        <div class="flex justify-between gap-4"><dt class="text-muted-foreground">This dialog</dt><dd class="font-mono text-xs">?</dd></div>
+      </dl>
+    </div>
+  </div>
+
+  {# -- Canvas stage ------------------------------------------------------ #}
+  <main class="relative flex-1 min-h-0 overflow-hidden bg-muted/40"
+        id="wb-stage"
+        style="touch-action: none;"
+        data-wb-user="{{ creator_initials|default:'' }}"
+        data-wb-partner="{{ partner_initials|default:'' }}"
+        data-wb-account="{{ account_id|default:'' }}"
+        data-wb-public-id="{{ partnership.public_id }}"
+        data-wb-api-base="/api/whiteboards/{{ partnership.public_id }}">
+    <canvas id="wb-canvas" class="absolute inset-0 block h-full w-full bg-canvas"
+            role="img" aria-label="Shared whiteboard canvas" aria-describedby="wb-canvas-help"></canvas>
+    <p id="wb-canvas-help" class="sr-only">Freehand drawing surface shared between you and your partner. Use the toolbar to draw, erase, select and delete, or zoom and pan the board.</p>
+
+    <div id="wb-hover-avatar" class="pointer-events-none absolute z-20 hidden w-6 h-6 -ml-3 -mt-3 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold items-center justify-center" aria-hidden="true"></div>
+  </main>
+
+  {# -- Status bar -------------------------------------------------------- #}
+  <footer class="flex items-center justify-between gap-3 px-4 h-9 border-t border-border bg-card text-xs text-muted-foreground shrink-0 select-none pb-[env(safe-area-inset-bottom)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
+    <div class="flex items-center gap-3 min-w-0">
+      <span id="wb-cursor-status" class="truncate" aria-live="polite">Ready</span>
+    </div>
+    <div class="flex items-center gap-4">
+      {# Realtime collaboration status (Phase 5) #}
+      <span id="wb-realtime-status" class="flex items-center gap-1.5" aria-live="polite"
+            title="Live collaboration state" aria-label="Collaboration state">
+        <span class="inline-block w-2 h-2 rounded-full bg-muted-foreground" id="wb-realtime-dot" aria-hidden="true"></span>
+        <span id="wb-realtime-label">Connecting</span>
+      </span>
+      <span id="wb-presence-count" class="hidden items-center gap-1 tabular-nums"
+            aria-label="People currently viewing"></span>
+      <span id="wb-save-status" class="flex items-center gap-1.5" aria-live="polite">
+        <span class="wb-save-dot inline-block w-2 h-2 rounded-full bg-success" id="wb-save-dot" aria-hidden="true"></span>
+        <span id="wb-save-label">Saved</span>
+      </span>
+      <button type="button" id="wb-retry-save" class="hidden text-warning hover:text-foreground transition-colors"
+              title="Retry saving" aria-label="Retry saving">
+        <i data-lucide="refresh-cw" class="w-3.5 h-3.5" aria-hidden="true"></i>
+      </button>
+      <span id="wb-mobile-hint" class="hidden sm:inline tabular-nums" aria-hidden="true"></span>
+      <span id="wb-zoom-label" class="tabular-nums">100%</span>
+      <span id="wb-count" class="tabular-nums">0 strokes</span>
+    </div>
+  </footer>
+
+  {# -- Conflict / needs-attention panel ----------------------------------- #}
+  <div id="wb-conflict-panel" class="hidden fixed bottom-14 inset-x-0 z-30 flex justify-center px-4" role="region"
+       aria-live="assertive" aria-label="Changes that need your attention">
+    <div class="flex items-center gap-3 rounded-lg border border-warning bg-warning/10 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+      <i data-lucide="alert-triangle" class="w-4 h-4 text-warning shrink-0" aria-hidden="true"></i>
+      <div class="min-w-0">
+        <p id="wb-conflict-message" class="font-medium">Some changes need attention.</p>
+        <p class="text-muted-foreground truncate">Your offline changes conflict with a newer version of this board.</p>
+      </div>
+      <button type="button" id="wb-conflict-review" class="shrink-0 rounded-md bg-accent px-2.5 py-1 font-medium text-foreground hover:bg-accent/80 transition-colors"
+              aria-label="Review offline changes">Review</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script type="module" src="{% static 'dist/assets/whiteboard.js' %}" {% csp_nonce_attr %}></script>
+{% endblock %}

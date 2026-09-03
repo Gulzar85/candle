@@ -1,0 +1,113 @@
+{% extends "layouts/shell.html" %}
+{% load partnership_tags %}
+
+{% block content %}
+<div class="px-4 lg:px-6 py-6 max-w-3xl mx-auto">
+
+  {% include "components/_messages.html" %}
+
+  <header class="mb-8 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Invitations</h1>
+      <p class="text-sm text-muted-foreground mt-1">Manage the invitations in your inbox.</p>
+    </div>
+    <a href="{% url 'partnerships:partnership_home' %}"
+       class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors">
+      <i data-lucide="arrow-left" class="w-4 h-4" aria-hidden="true"></i> Back
+    </a>
+  </header>
+
+  {% if not received and not sent %}
+  {% include "components/empty-state.html" with icon="mail" title="No invitations yet" description="There are no invitations waiting for you right now." %}
+  <div class="flex justify-center -mt-8">
+    <a href="{% url 'partnerships:partnership_home' %}" class="btn-primary">
+      <i data-lucide="user-plus" class="w-4 h-4" aria-hidden="true"></i> Invite someone
+    </a>
+  </div>
+  {% endif %}
+
+  {% if received %}
+  <section class="space-y-3 mb-8" aria-label="Received invitations">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Received</h2>
+    {% for invitation in received %}
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center w-10 h-10 rounded-full bg-muted text-muted-foreground shrink-0">
+          {{ invitation.inviter.profile.get_initials }}
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold truncate">{{ invitation.inviter.profile.get_display_name }}</p>
+          <p class="text-xs text-muted-foreground">Sent {{ invitation.created_at|timesince }} ago</p>
+        </div>
+        {% if invitation|is_expired %}
+        {% include "components/badge.html" with label="Expired" variant="danger" %}
+        {% else %}
+        {% include "components/badge.html" with label="Pending" variant="warning" %}
+        {% endif %}
+      </div>
+      {% if not invitation|is_expired %}
+      <div class="flex gap-2 mt-3">
+        <form method="post" action="{% url 'partnerships:invitation_accept' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-medium min-h-[44px] hover:bg-primary/90 transition-colors">
+            <i data-lucide="check" class="w-4 h-4" aria-hidden="true"></i> Accept
+          </button>
+        </form>
+        <form method="post" action="{% url 'partnerships:invitation_reject' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-xs min-h-[44px] hover:bg-muted transition-colors">
+            <i data-lucide="x" class="w-4 h-4" aria-hidden="true"></i> Decline
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if sent %}
+  <section class="space-y-3" aria-label="Sent invitations">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Sent</h2>
+    {% for invitation in sent %}
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center w-10 h-10 rounded-full bg-muted text-muted-foreground shrink-0">
+          <i data-lucide="mail" class="w-5 h-5" aria-hidden="true"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold truncate">{{ invitation.invitee_email }}</p>
+          <p class="text-xs text-muted-foreground">{{ invitation.created_at|timesince }} ago</p>
+        </div>
+        {% if invitation.status == 'accepted' %}
+        {% include "components/badge.html" with label=invitation|invitation_status_label variant="success" %}
+        {% elif invitation.status == 'sent' and not invitation|is_expired %}
+        {% include "components/badge.html" with label=invitation|invitation_status_label variant="warning" %}
+        {% elif invitation.status == 'sent' and invitation|is_expired %}
+        {% include "components/badge.html" with label=invitation|invitation_status_label variant="danger" %}
+        {% else %}
+        {% include "components/badge.html" with label=invitation|invitation_status_label variant="outline" %}
+        {% endif %}
+      </div>
+      {% if invitation.status == 'sent' %}
+      <div class="flex gap-2 mt-3">
+        <form method="post" action="{% url 'partnerships:invitation_resend' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 py-2 text-xs min-h-[44px] hover:bg-muted transition-colors">
+            <i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i> Resend
+          </button>
+        </form>
+        <form method="post" action="{% url 'partnerships:invitation_revoke' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit" class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-danger/30 text-danger bg-background px-3 py-2 text-xs min-h-[44px] hover:bg-danger/5 transition-colors">
+            <i data-lucide="x" class="w-4 h-4" aria-hidden="true"></i> Cancel
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</div>
+{% endblock content %}

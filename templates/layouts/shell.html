@@ -6,28 +6,41 @@
   x-data="{
     sidebarOpen: true,
     mobileMenuOpen: false,
-    darkMode: localStorage.getItem('theme') === 'dark',
+    darkMode: window.__theme.isDark(),
     toggleDark() {
-      this.darkMode = !this.darkMode;
-      localStorage.setItem('theme', this.darkMode ? 'dark' : 'light');
-      document.documentElement.classList.toggle('dark', this.darkMode);
+      window.__theme.toggle();
+      this.darkMode = window.__theme.isDark();
     },
     toggleSidebar() {
       this.sidebarOpen = !this.sidebarOpen;
     },
     toggleMobileMenu() {
-      this.mobileMenuOpen = !this.mobileMenuOpen;
+      if (!this.mobileMenuOpen) {
+        this.lastFocused = document.activeElement;
+        this.mobileMenuOpen = true;
+        this.$nextTick(() => {
+          const el = this.$refs.mobileDrawer;
+          if (el) {
+            const first = el.querySelector('button[data-menu-close], a');
+            if (first) first.focus();
+          }
+        });
+      } else {
+        this.mobileMenuOpen = false;
+      }
     }
   }"
+  x-effect="mobileMenuOpen ? null : (this.lastFocused ? requestAnimationFrame(() => { this.lastFocused.focus(); this.lastFocused = null; }) : null)"
   class="h-dvh overflow-hidden">
 
   {# Desktop Sidebar #}
   <aside
+    id="desktop-sidebar"
     class="hidden lg:flex lg:flex-col lg:shrink-0 border-r border-border bg-card transition-[width] duration-300"
     :class="sidebarOpen ? 'lg:w-64' : 'lg:w-16'">
 
     <div class="flex items-center h-16 px-4 border-b border-border">
-      <a href="{% url 'home' %}" class="flex items-center gap-2.5" aria-label="Candle home">
+      <a href="{% url 'core:home' %}" class="flex items-center gap-2.5" aria-label="Candle home">
         <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-primary">
           <i data-lucide="flame" class="w-4 h-4 text-primary-foreground" aria-hidden="true"></i>
         </div>
@@ -38,66 +51,40 @@
     <nav class="flex-1 overflow-y-auto py-4 px-3" aria-label="Main navigation">
       <ul class="space-y-1">
         <li>
-          <a href="{% url 'home' %}"
-             hx-get="{% url 'home' %}"
-             hx-target="#main-content"
-             hx-swap="innerHTML"
-             hx-push-url="true"
+          <a href="{% url 'core:home' %}"
              class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
-                    {% if request.resolver_match.url_name == 'home' %}bg-muted text-foreground{% else %}text-muted-foreground hover:text-foreground hover:bg-muted{% endif %}"
+                    {% if request.resolver_match.namespace == 'core' and request.resolver_match.url_name == 'home' %}bg-muted text-foreground{% else %}text-muted-foreground hover:text-foreground hover:bg-muted{% endif %}"
              aria-current="{% if request.resolver_match.url_name == 'home' %}page{% endif %}">
             <i data-lucide="house" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
             <span x-show="sidebarOpen" x-cloak>Home</span>
           </a>
         </li>
+        {% if user.is_authenticated %}
         <li>
-          <a href="/todashboard/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <a href="{% url 'accounts:dashboard' %}"
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                    {% if request.resolver_match.namespace == 'accounts' and request.resolver_match.url_name == 'dashboard' %}bg-muted text-foreground{% else %}text-muted-foreground hover:text-foreground hover:bg-muted{% endif %}">
             <i data-lucide="layout-grid" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
             <span x-show="sidebarOpen" x-cloak>Dashboard</span>
           </a>
         </li>
         <li>
-          <a href="/search/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <i data-lucide="search" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
-            <span x-show="sidebarOpen" x-cloak>Search</span>
-          </a>
-        </li>
-      </ul>
-
-      <p class="px-3 pt-6 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground/70" x-show="sidebarOpen" x-cloak>
-        Workspace
-      </p>
-      <ul class="space-y-1">
-        <li>
-          <a href="/whiteboards/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <i data-lucide="panels-top-left" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
-            <span x-show="sidebarOpen" x-cloak>Whiteboards</span>
-          </a>
-        </li>
-        <li>
-          <a href="/partners/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <i data-lucide="users" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
-            <span x-show="sidebarOpen" x-cloak>Partners</span>
-          </a>
-        </li>
-        <li>
-          <a href="/notifications/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <i data-lucide="bell" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
-            <span x-show="sidebarOpen" x-cloak>Notifications</span>
-          </a>
-        </li>
-        <li>
-          <a href="/settings/"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <a href="{% url 'accounts:settings' %}"
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                    {% if request.resolver_match.namespace == 'accounts' and request.resolver_match.url_name == 'settings' %}bg-muted text-foreground{% else %}text-muted-foreground hover:text-foreground hover:bg-muted{% endif %}">
             <i data-lucide="settings" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
             <span x-show="sidebarOpen" x-cloak>Settings</span>
           </a>
         </li>
+        <li>
+          <a href="{% url 'partnerships:partnership_home' %}"
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                    {% if request.resolver_match.namespace == 'partnerships' %}bg-muted text-foreground{% else %}text-muted-foreground hover:text-foreground hover:bg-muted{% endif %}">
+            <i data-lucide="heart-handshake" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
+            <span x-show="sidebarOpen" x-cloak>Partnership</span>
+          </a>
+        </li>
+        {% endif %}
       </ul>
     </nav>
 
@@ -107,7 +94,7 @@
         class="flex items-center justify-center w-full py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         :aria-label="sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'"
         aria-controls="desktop-sidebar"
-        aria-expanded="true">
+        :aria-expanded="sidebarOpen">
         <i data-lucide="panel-left-close" class="w-5 h-5 transition-transform" :class="!sidebarOpen && 'rotate-180'" aria-hidden="true"></i>
       </button>
     </div>
@@ -117,8 +104,10 @@
   <div
     x-show="mobileMenuOpen"
     x-cloak
+    x-transition.opacity
     class="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden"
-    @click="mobileMenuOpen = false"></div>
+    @click="mobileMenuOpen = false"
+    @keydown.escape.window="mobileMenuOpen = false"></div>
 
   {# Mobile drawer #}
   <aside
@@ -130,10 +119,13 @@
     x-transition:leave="transition-transform ease-in duration-150"
     x-transition:leave-start="translate-x-0"
     x-transition:leave-end="-translate-x-full"
-    class="fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border lg:hidden"
+    x-ref="mobileDrawer"
+    class="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-card border-r border-border lg:hidden"
     role="dialog"
     aria-modal="true"
-    aria-label="Navigation menu">
+    aria-labelledby="mobile-menu-title"
+    @keydown.escape.window="mobileMenuOpen = false">
+    <p id="mobile-menu-title" class="sr-only">Navigation menu</p>
 
     <div class="flex items-center justify-between h-16 px-4 border-b border-border">
       <div class="flex items-center gap-2.5">
@@ -143,6 +135,7 @@
         <span class="text-lg font-semibold tracking-tight">Candle</span>
       </div>
       <button
+        data-menu-close
         @click="mobileMenuOpen = false"
         class="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         aria-label="Close navigation menu">
@@ -153,20 +146,16 @@
     <nav class="flex-1 overflow-y-auto py-4 px-3" aria-label="Mobile navigation">
       <ul class="space-y-1">
         <li>
-          <a href="{% url 'home' %}"
-             hx-get="{% url 'home' %}"
-             hx-target="#main-content"
-             hx-swap="innerHTML"
-             hx-push-url="true"
+          <a href="{% url 'core:home' %}"
              @click="mobileMenuOpen = false"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-                    {% if request.resolver_match.url_name == 'home' %}bg-muted text-foreground{% else %}text-muted-foreground{% endif %}">
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground">
             <i data-lucide="house" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
             <span>Home</span>
           </a>
         </li>
+        {% if user.is_authenticated %}
         <li>
-          <a href="/dashboard/"
+          <a href="{% url 'accounts:dashboard' %}"
              @click="mobileMenuOpen = false"
              class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground">
             <i data-lucide="layout-grid" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
@@ -174,21 +163,22 @@
           </a>
         </li>
         <li>
-          <a href="/search/"
-             @click="mobileMenuOpen = false"
-             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground">
-            <i data-lucide="search" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
-            <span>Search</span>
-          </a>
-        </li>
-        <li>
-          <a href="/settings/"
+          <a href="{% url 'accounts:settings' %}"
              @click="mobileMenuOpen = false"
              class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground">
             <i data-lucide="settings" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
             <span>Settings</span>
           </a>
         </li>
+        <li>
+          <a href="{% url 'partnerships:partnership_home' %}"
+             @click="mobileMenuOpen = false"
+             class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground">
+            <i data-lucide="heart-handshake" class="w-5 h-5 shrink-0" aria-hidden="true"></i>
+            <span>Partnership</span>
+          </a>
+        </li>
+        {% endif %}
       </ul>
     </nav>
   </aside>
@@ -196,13 +186,13 @@
   {# Main column #}
   <div class="flex flex-col flex-1 min-w-0">
 
-    <header class="flex items-center h-16 px-4 lg:px-6 border-b border-border bg-card/90 backdrop-blur-sm shrink-0">
+    <header class="flex items-center h-16 px-4 lg:px-6 border-b border-border bg-card/90 backdrop-blur-sm shrink-0 pt-[env(safe-area-inset-top)]">
       <div class="flex items-center gap-3 lg:hidden">
         <button
           @click="toggleMobileMenu()"
           class="p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           aria-controls="mobile-menu"
-          aria-expanded="false"
+          :aria-expanded="mobileMenuOpen"
           aria-label="Open navigation menu">
           <i data-lucide="menu" class="w-5 h-5" aria-hidden="true"></i>
         </button>
@@ -214,28 +204,9 @@
         </div>
       </div>
 
-      <div class="hidden lg:flex lg:flex-1 lg:max-w-md lg:mx-8">
-        <div class="relative w-full">
-          <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
-          <label for="global-search" class="sr-only">Search</label>
-          <input
-            id="global-search"
-            type="search"
-            placeholder="Search..."
-            class="w-full h-10 pl-10 pr-4 text-sm bg-muted border border-input rounded-lg placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring transition-shadow">
-        </div>
-      </div>
-
       <div class="flex-1 lg:hidden"></div>
 
       <div class="flex items-center gap-1">
-        <a
-          href="/notifications/"
-          class="hidden lg:flex relative items-center justify-center w-10 h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          aria-label="Notifications">
-          <i data-lucide="bell" class="w-5 h-5" aria-hidden="true"></i>
-        </a>
-
         <button
           @click="toggleDark()"
           class="flex items-center justify-center w-10 h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -244,20 +215,76 @@
           <i data-lucide="moon" class="w-5 h-5 block dark:hidden" aria-hidden="true"></i>
         </button>
 
-        <div class="hidden lg:flex ml-2 pl-3 border-l border-border">
-          <button
-            class="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-muted transition-colors"
-            aria-label="Account menu">
-            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-muted">
-              <i data-lucide="user" class="w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
+        {% if user.is_authenticated %}
+        <div class="hidden lg:flex ml-2 pl-3 border-l border-border" x-data="{ menuOpen: false }"
+             @click.outside="menuOpen = false" @keydown.escape.window="menuOpen = false">
+          <div class="relative">
+            <button
+              @click="menuOpen = !menuOpen"
+              class="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-muted transition-colors"
+              :aria-expanded="menuOpen"
+              aria-haspopup="true"
+              aria-controls="account-menu"
+              aria-label="Account menu"
+              x-ref="accountTrigger">
+              {% if user.profile.avatar %}
+              {% include "components/avatar.html" with size="sm" image_url=user.profile.avatar.url name=user.profile.get_display_name %}
+              {% else %}
+              {% include "components/avatar.html" with size="sm" initials=user.profile.get_initials name=user.profile.get_display_name %}
+              {% endif %}
+              <i data-lucide="chevron-down" class="w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
+            </button>
+
+            <div
+              id="account-menu"
+              x-show="menuOpen"
+              x-cloak
+              x-transition
+              class="absolute right-0 mt-2 w-60 bg-popover text-popover-foreground border border-border rounded-xl shadow-3 overflow-hidden"
+              @keydown.escape="menuOpen = false">
+              <div class="px-4 py-3 border-b border-border">
+                <p class="text-sm font-medium truncate">{{ user.email }}</p>
+                <p class="text-xs text-muted-foreground truncate">{{ user.profile.get_display_name }}</p>
+              </div>
+              <div class="py-1.5">
+                <a href="{% url 'accounts:profile' %}" @click="menuOpen = false"
+                   class="flex items-center gap-3 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <i data-lucide="user" class="w-4 h-4" aria-hidden="true"></i> Profile
+                </a>
+                <a href="{% url 'accounts:settings' %}" @click="menuOpen = false"
+                   class="flex items-center gap-3 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <i data-lucide="settings" class="w-4 h-4" aria-hidden="true"></i> Settings
+                </a>
+                <a href="{% url 'accounts:password_change' %}" @click="menuOpen = false"
+                   class="flex items-center gap-3 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <i data-lucide="key-round" class="w-4 h-4" aria-hidden="true"></i> Change password
+                </a>
+              </div>
+              <div class="border-t border-border py-1.5">
+                <form method="post" action="{% url 'accounts:logout' %}">
+                  {% csrf_token %}
+                  <button type="submit"
+                          class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-danger hover:bg-danger/5 transition-colors">
+                    <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i> Sign out
+                  </button>
+                </form>
+              </div>
             </div>
-            <i data-lucide="chevron-down" class="w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
-          </button>
+          </div>
         </div>
+        {% else %}
+        <div class="hidden lg:flex items-center gap-2 ml-3 pl-3 border-l border-border">
+          <a href="{% url 'accounts:login' %}" class="px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sign in</a>
+          <a href="{% url 'accounts:register' %}"
+             class="inline-flex items-center justify-center rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+            Create account
+          </a>
+        </div>
+        {% endif %}
       </div>
     </header>
 
-    <main id="main-content" class="flex-1 overflow-y-auto">
+    <main id="main-content" class="flex-1 overflow-y-auto lg:pb-0 pb-[calc(4rem+env(safe-area-inset-bottom))]">
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -265,26 +292,44 @@
   {# Mobile bottom navigation #}
   <nav class="fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-border lg:hidden pb-[env(safe-area-inset-bottom)]" aria-label="Bottom navigation">
     <div class="flex items-stretch h-16 max-w-lg mx-auto">
-      <a href="{% url 'home' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Home">
+      <a href="{% url 'core:home' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Home">
         <i data-lucide="house" class="w-5 h-5" aria-hidden="true"></i>
         <span class="text-[10px] font-medium">Home</span>
       </a>
-      <a href="/dashboard/" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Dashboard">
+      {% if user.is_authenticated %}
+      <a href="{% url 'accounts:dashboard' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Dashboard">
         <i data-lucide="layout-grid" class="w-5 h-5" aria-hidden="true"></i>
         <span class="text-[10px] font-medium">Dashboard</span>
       </a>
-      <a href="/search/" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Search">
-        <i data-lucide="search" class="w-5 h-5" aria-hidden="true"></i>
-        <span class="text-[10px] font-medium">Search</span>
+      <a href="{% url 'partnerships:partnership_home' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Partnership">
+        <i data-lucide="heart-handshake" class="w-5 h-5" aria-hidden="true"></i>
+        <span class="text-[10px] font-medium">Partner</span>
       </a>
-      <a href="/notifications/" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Notifications">
-        <i data-lucide="bell" class="w-5 h-5" aria-hidden="true"></i>
-        <span class="text-[10px] font-medium">Alerts</span>
+      <a href="{% url 'accounts:profile' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Profile">
+        <i data-lucide="user" class="w-5 h-5" aria-hidden="true"></i>
+        <span class="text-[10px] font-medium">Profile</span>
       </a>
-      <a href="/settings/" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Settings">
+      {% if user.profile.avatar %}
+      <a href="{% url 'accounts:settings' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Settings">
+        <img src="{{ user.profile.avatar.url }}" alt="" class="w-6 h-6 rounded-full object-cover">
+        <span class="text-[10px] font-medium">Settings</span>
+      </a>
+      {% else %}
+      <a href="{% url 'accounts:settings' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Settings">
         <i data-lucide="settings" class="w-5 h-5" aria-hidden="true"></i>
         <span class="text-[10px] font-medium">Settings</span>
       </a>
+      {% endif %}
+      {% else %}
+      <a href="{% url 'accounts:login' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Sign in">
+        <i data-lucide="log-in" class="w-5 h-5" aria-hidden="true"></i>
+        <span class="text-[10px] font-medium">Sign in</span>
+      </a>
+      <a href="{% url 'accounts:register' %}" class="flex flex-col items-center justify-center flex-1 gap-1 text-muted-foreground" aria-label="Create account">
+        <i data-lucide="user-plus" class="w-5 h-5" aria-hidden="true"></i>
+        <span class="text-[10px] font-medium">Sign up</span>
+      </a>
+      {% endif %}
     </div>
   </nav>
 </div>

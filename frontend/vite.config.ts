@@ -7,7 +7,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
-      "@css": resolve(__dirname, "../static/css"),
     },
   },
   plugins: [tailwindcss()],
@@ -23,6 +22,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, "src/main.ts"),
+        whiteboard: resolve(__dirname, "src/whiteboard/index.ts"),
       },
       output: {
         entryFileNames: "assets/[name].js",

@@ -1,0 +1,24 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-12 h-12 rounded-full bg-warning/10 mx-auto mb-4">
+    <i data-lucide="hourglass" class="w-6 h-6 text-warning" aria-hidden="true"></i>
+  </div>
+  <h1 class="text-xl font-semibold tracking-tight mb-2">Too many attempts</h1>
+  <p class="text-sm text-muted-foreground mb-6">
+    You've made too many attempts in a short time. Please wait a few minutes and
+    try again.
+  </p>
+  <div class="space-y-2">
+    <a href="{% url 'accounts:login' %}"
+       class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+      Back to sign in
+    </a>
+    <a href="{% url 'core:home' %}"
+       class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+      Go to home
+    </a>
+  </div>
+</div>
+{% endblock %}

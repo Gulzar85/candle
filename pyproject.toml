@@ -16,6 +16,8 @@ dependencies = [
     "redis>=8.1,<9",
     "whitenoise>=6.9,<7",
     "gunicorn>=23.0,<24",
+    "Pillow>=11,<12",
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -64,11 +66,18 @@ warn_unused_configs = true
 module = "tests.*"
 disallow_untyped_defs = false
 
+# DRF and Channels/Daphne ship no type stubs / py.typed marker; treat them as
+# untyped (Any) so the whiteboard API + realtime layer can import them without
+# mypy errors.
+[[tool.mypy.overrides]]
+module = ["rest_framework", "rest_framework.*", "channels", "channels.*", "daphne", "daphne.*"]
+ignore_missing_imports = true
+
 [tool.django-stubs]
-django_settings_module = "config.settings.development"
+django_settings_module = "config.settings.test"
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "config.settings.development"
+DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
 addopts = "-ra -q --tb=short"
 asyncio_mode = "auto"

@@ -1,0 +1,16 @@
+{% extends "emails/email_base.html" %}
+
+{% block email_body %}
+<p style="font-size:15px;line-height:1.6;margin:0 0 8px;">Hi {{ user.get_short_name }},</p>
+<p style="font-size:15px;line-height:1.6;margin:0 0 24px;">We received a request to change your Candle email address to <strong>{{ new_email }}</strong>. Click the button below to confirm this change. The link expires in {{ expires_hours }} hours.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+  <tr>
+    <td style="border-radius:8px;background-color:#2563eb;">
+      <a href="{{ confirm_url }}" style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;">Confirm new email</a>
+    </td>
+  </tr>
+</table>
+<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">If the button doesn't work, copy and paste this link into your browser:</p>
+<p style="font-size:13px;line-height:1.6;color:#2563eb;word-break:break-all;margin:0 0 24px;">{{ confirm_url }}</p>
+<p style="font-size:13px;line-height:1.6;color:#737373;margin:0;">If you didn't request this change, you can safely ignore this email and your current email will remain unchanged.</p>
+{% endblock %}

@@ -1,0 +1,136 @@
+{% extends "layouts/auth.html" %}
+{% load partnership_tags %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-16 h-16 rounded-full bg-accent text-accent-foreground mx-auto mb-4">
+    <i data-lucide="heart-handshake" class="w-8 h-8" aria-hidden="true"></i>
+  </div>
+
+      {% if expired %}
+        <h1 class="text-xl font-semibold tracking-tight">This invitation has expired</h1>
+        <p class="text-sm text-muted-foreground mt-3">
+          Ask <span class="font-medium text-foreground">{{ inviter_name }}</span> to send you a new invitation.
+        </p>
+        {% if user.is_authenticated %}
+        <a href="{% url 'partnerships:partnership_home' %}"
+           class="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+          Go to my space
+        </a>
+        {% else %}
+        <div class="mt-6 flex flex-col gap-2">
+          <a href="{% url 'accounts:login' %}"
+             class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+            Sign in
+          </a>
+          <a href="{% url 'core:home' %}"
+             class="inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+            Go to Candle
+          </a>
+        </div>
+        {% endif %}
+
+      {% elif used or invitation.status == 'accepted' or invitation.status == 'revoked' or invitation.status == 'rejected' %}
+        <h1 class="text-xl font-semibold tracking-tight">This invitation is no longer available</h1>
+        <p class="text-sm text-muted-foreground mt-3">
+          It has already been {% if invitation.status == 'accepted' %}accepted{% elif invitation.status == 'revoked' %}cancelled{% else %}declined{% endif %}.
+        </p>
+        {% if user.is_authenticated %}
+        <a href="{% url 'partnerships:partnership_home' %}"
+           class="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+          Go to my space
+        </a>
+        {% else %}
+        <a href="{% url 'core:home' %}"
+           class="mt-6 inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+          Go to Candle
+        </a>
+        {% endif %}
+
+      {% elif user.is_authenticated and is_invitee %}
+        <span class="inline-flex items-center rounded-full text-xs font-medium px-3 py-1 bg-success/10 text-success mb-4">
+          <i data-lucide="check-circle-2" class="w-4 h-4 mr-1" aria-hidden="true"></i> Valid invitation
+        </span>
+        <h1 class="text-xl font-semibold tracking-tight">You're invited</h1>
+        <p class="text-sm text-muted-foreground mt-3">
+          <span class="font-medium text-foreground">{{ inviter_name }}</span> has invited you to connect and share a space on Candle.
+        </p>
+        <p class="text-xs text-muted-foreground mt-4 flex items-center justify-center gap-1">
+          <i data-lucide="clock" class="w-4 h-4" aria-hidden="true"></i>
+          This invitation expires in {{ invitation.expires_at|timeuntil }}
+        </p>
+
+        <div class="mt-6 flex flex-col gap-2">
+          {% if actionable %}
+          <form method="post" action="{% url 'partnerships:invitation_accept' public_id=invitation.public_id %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'partnerships:partnership_home' %}">
+            <button type="submit"
+                    class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+              <i data-lucide="heart" class="w-4 h-4" aria-hidden="true"></i> Accept &amp; connect
+            </button>
+          </form>
+          <form method="post" action="{% url 'partnerships:invitation_reject' public_id=invitation.public_id %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'partnerships:invitation_list' %}">
+            <button type="submit"
+                    class="inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+              Decline
+            </button>
+          </form>
+          {% else %}
+          <p class="text-sm text-muted-foreground text-center">
+            {{ invitation.get_status_display }}
+          </p>
+          {% endif %}
+        </div>
+
+      {% elif user.is_authenticated and not is_invitee %}
+        <h1 class="text-xl font-semibold tracking-tight">This invitation isn't for this account</h1>
+        <p class="text-sm text-muted-foreground mt-3">
+          You're signed in as <span class="font-medium">{{ user.email }}</span>, but this invitation was sent to a different address.
+        </p>
+        <div class="mt-6 flex flex-col gap-2">
+          {% if not invitee_has_account %}
+          <a href="{% url 'accounts:register' %}"
+             class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+            Create an account
+          </a>
+          {% endif %}
+          <a href="{% url 'accounts:logout' %}"
+             class="inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+            Use a different account
+          </a>
+        </div>
+
+      {% else %}
+        {# Anonymous visitor #}
+        <h1 class="text-xl font-semibold tracking-tight">You're invited</h1>
+        <p class="text-sm text-muted-foreground mt-3">
+          <span class="font-medium text-foreground">{{ inviter_name }}</span> has invited you to connect and share a space on Candle.
+        </p>
+        <div class="mt-6 flex flex-col gap-2">
+          {% if invitee_has_account %}
+          <a href="{% url 'accounts:login' %}?next={% url 'partnerships:invite_accept' token=token %}"
+             class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+            Sign in to accept
+          </a>
+          {% else %}
+          <a href="{% url 'accounts:register' %}"
+             class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors w-full">
+            Create an account to accept
+          </a>
+          {% endif %}
+          <a href="{% url 'core:home' %}"
+             class="inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors w-full">
+            Maybe later
+          </a>
+        </div>
+      {% endif %}
+    </div>
+  <p class="mt-4 text-xs text-center text-muted-foreground">
+    <i data-lucide="shield-check" class="w-3.5 h-3.5 inline-block" aria-hidden="true"></i>
+    This invitation is private and only for the person it was sent to.
+  </p>
+</div>
+{% endblock auth_content %}

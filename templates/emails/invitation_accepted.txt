@@ -1,0 +1,5 @@
+Hi,
+
+Great news — {{ partner_name }} accepted your invitation. Your shared space on Candle is now live.
+
+Visit it here: {{ partnership_url }}

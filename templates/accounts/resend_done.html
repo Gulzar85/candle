@@ -1,0 +1,18 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-12 h-12 rounded-full bg-success/10 mx-auto mb-4">
+    <i data-lucide="mail-check" class="w-6 h-6 text-success" aria-hidden="true"></i>
+  </div>
+  <h1 class="text-xl font-semibold tracking-tight mb-2">Check your inbox</h1>
+  <p class="text-sm text-muted-foreground mb-6">
+    If an account exists with that email and it isn't verified yet, we've sent a
+    fresh verification link. It expires in 24 hours.
+  </p>
+  <a href="{% url 'accounts:login' %}"
+     class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+    Back to sign in
+  </a>
+</div>
+{% endblock %}

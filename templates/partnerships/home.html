@@ -1,0 +1,234 @@
+{% extends "layouts/shell.html" %}
+{% load partnership_tags %}
+
+{% block content %}
+<div class="px-4 lg:px-6 py-6 max-w-3xl mx-auto">
+
+  {% include "components/_messages.html" %}
+
+  <header class="mb-8">
+    <h1 class="text-2xl font-semibold tracking-tight">Your space</h1>
+    <p class="text-sm text-muted-foreground mt-1">A private place to create together.</p>
+  </header>
+
+  {% if active %}
+    {# ---------- Connected state ---------- #}
+    <section class="bg-card border border-border rounded-2xl p-6" aria-label="Your partnership">
+      <div class="flex items-center gap-4">
+        <div class="flex -space-x-3">
+          <div class="rounded-full ring-2 ring-card">
+            {% include "components/avatar.html" with size="lg" tone="primary" initials=user.profile.get_initials name=user.profile.get_display_name %}
+          </div>
+          {% if partner %}
+          <div class="rounded-full ring-2 ring-card">
+            {% include "components/avatar.html" with size="lg" initials=partner.profile.get_initials name=partner.profile.get_display_name %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="min-w-0">
+          <p class="text-base font-semibold truncate">
+            {% if partner %}{{ partner.profile.get_display_name }}{% else %}Your partner{% endif %}
+          </p>
+          <p class="text-sm text-success flex items-center gap-1 mt-0.5">
+            <i data-lucide="heart" class="w-4 h-4" aria-hidden="true"></i>
+            Connected{% if active.accepted_at %} since {{ active.accepted_at|date:"M j, Y" }}{% endif %}
+          </p>
+        </div>
+      </div>
+
+      <a href="{% url 'whiteboard:whiteboard_home' public_id=active.public_id %}"
+         class="mt-6 inline-flex items-center justify-center gap-2 w-full rounded-lg bg-primary text-primary-foreground px-4 py-3 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+        <i data-lucide="pencil-ruler" class="w-5 h-5" aria-hidden="true"></i>
+        Enter your shared space
+      </a>
+
+      <details class="mt-6 border-t border-border pt-4" x-data="{ open: false }">
+        <summary class="flex items-center justify-between cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground list-none"
+                 @click="open = !open" :aria-expanded="open">
+          <span class="flex items-center gap-2"><i data-lucide="settings-2" class="w-4 h-4" aria-hidden="true"></i> Manage partnership</span>
+          <i data-lucide="chevron-down" class="w-4 h-4 transition-transform" :class="open && 'rotate-180'" aria-hidden="true"></i>
+        </summary>
+        <div class="mt-4">
+          <form method="post" action="{% url 'partnerships:partnership_end' %}"
+                x-data="{ showConfirm: false, text: '' }"
+                @submit="if (!showConfirm || text.trim().toLowerCase() !== 'end') { $event.preventDefault(); showConfirm = true; }">
+            {% csrf_token %}
+            <input type="hidden" name="partnership_id" value="{{ active.public_id }}">
+            <input type="hidden" name="next" value="{% url 'partnerships:partnership_home' %}">
+
+            <template x-if="!showConfirm">
+              <button type="submit"
+                      class="inline-flex items-center gap-2 text-sm font-medium text-danger hover:bg-danger/5 rounded-lg px-3 py-2 transition-colors min-h-[44px]">
+                <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i> End partnership
+              </button>
+            </template>
+
+            <template x-if="showConfirm">
+              <div class="rounded-lg border border-danger/30 bg-danger/5 p-4 space-y-3">
+                <p class="text-sm font-medium">Are you sure? This ends your shared space for both of you.</p>
+                <div>
+                  <label for="end-confirm" class="block text-sm font-medium mb-1.5">Type "end" to confirm</label>
+                  <input id="end-confirm" type="text" name="confirm" x-model="text" autocomplete="off" autocapitalize="none"
+                         class="w-full h-11 rounded-lg border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring min-h-[44px] border-danger/50"
+                         placeholder="end">
+                </div>
+                <div class="flex items-center gap-2">
+                  <button type="button" @click="showConfirm = false"
+                          class="inline-flex items-center justify-center rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors">
+                    Cancel
+                  </button>
+                  <button type="submit"
+                          class="inline-flex items-center justify-center gap-2 rounded-lg bg-danger text-danger-foreground px-4 py-2.5 text-sm min-h-[44px] hover:bg-danger/90 transition-colors">
+                    <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i> End partnership
+                  </button>
+                </div>
+              </div>
+            </template>
+          </form>
+        </div>
+      </details>
+    </section>
+
+  {% else %}
+    {# ---------- No partner yet ---------- #}
+
+    {# Received invitations #}
+    {% for invitation in received_invitations %}
+    <section class="bg-card border border-border rounded-2xl p-6 mb-4" aria-label="Invitation from {{ invitation.inviter.profile.get_display_name }}">
+      <div class="flex items-start gap-4">
+        <div class="flex items-center justify-center w-12 h-12 rounded-full bg-muted text-muted-foreground shrink-0">
+          <i data-lucide="mail" class="w-5 h-5" aria-hidden="true"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-base font-semibold">Invitation from {{ invitation.inviter.profile.get_display_name }}</p>
+          <p class="text-sm text-muted-foreground mt-0.5">
+            {% if invitation.is_expired %}
+            Expired
+            {% else %}
+            Sent {{ invitation.created_at|timesince }} ago
+            {% endif %}
+          </p>
+        </div>
+      </div>
+      {% if not invitation.is_expired %}
+      <div class="flex flex-col sm:flex-row gap-2 mt-4">
+        <form method="post" action="{% url 'partnerships:invitation_accept' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors">
+            <i data-lucide="check" class="w-4 h-4" aria-hidden="true"></i> Accept
+          </button>
+        </form>
+        <form method="post" action="{% url 'partnerships:invitation_reject' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors">
+            <i data-lucide="x" class="w-4 h-4" aria-hidden="true"></i> Decline
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    {# Invite form when no pending invitation #}
+    {% if not pending %}
+    <section class="bg-card border border-border rounded-2xl p-6" aria-label="Invite your partner">
+      <div class="flex flex-col items-center text-center mb-5">
+        <div class="flex items-center justify-center w-16 h-16 rounded-full bg-accent text-accent-foreground mb-4">
+          <i data-lucide="heart-handshake" class="w-8 h-8" aria-hidden="true"></i>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight">Your shared space starts with someone special.</h2>
+        <p class="text-sm text-muted-foreground mt-2 max-w-md">
+          Invite your partner to begin. You'll get a private space for two — just you two.
+        </p>
+      </div>
+
+      <form method="post" action="{% url 'partnerships:invite' %}">
+        {% csrf_token %}
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="flex-1">
+            <label for="{{ invite_form.email.id_for_label }}" class="block text-sm font-medium mb-1.5">
+              {{ invite_form.email.label }}
+            </label>
+            {{ invite_form.email }}
+            {% for error in invite_form.email.errors %}
+            <p class="mt-1.5 text-sm text-danger flex items-center gap-1"><i data-lucide="alert-circle" class="w-4 h-4" aria-hidden="true"></i> {{ error }}</p>
+            {% endfor %}
+          </div>
+          <div class="sm:self-end">
+            <button type="submit"
+                    class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-5 py-2.5 text-sm font-medium min-h-[44px] hover:bg-primary/90 transition-colors disabled:opacity-50">
+              <i data-lucide="send" class="w-4 h-4" aria-hidden="true"></i> Send invitation
+            </button>
+          </div>
+        </div>
+        {% if invite_form.email.help_text %}
+        <p class="mt-2 text-xs text-muted-foreground">{{ invite_form.email.help_text }}</p>
+        {% endif %}
+      </form>
+
+      <p class="mt-6 text-xs text-muted-foreground flex items-center gap-1.5">
+        <i data-lucide="shield-check" class="w-4 h-4 text-primary shrink-0" aria-hidden="true"></i>
+        Invitations are private, single-use and expire after {{ invitation_expiry_hours }} hours. Your personal details are never shared.
+      </p>
+    </section>
+    {% else %}
+    {# Pending invitation state #}
+    <section class="bg-card border border-border rounded-2xl p-6" aria-label="Pending invitation">
+      {% for invitation in sent_invitations %}
+      {% if invitation.status == 'sent' %}
+      <div class="flex items-start gap-4">
+        <div class="flex items-center justify-center w-12 h-12 rounded-full bg-warning/10 text-warning shrink-0">
+          <i data-lucide="clock" class="w-6 h-6" aria-hidden="true"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <h2 class="text-lg font-semibold tracking-tight">Invitation pending</h2>
+          <p class="text-sm text-muted-foreground mt-1">
+            Waiting for <span class="font-medium text-foreground">{{ invitation.invitee_email }}</span> to accept.
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {% if invitation.is_expired %}
+            <span class="inline-flex items-center gap-1 text-danger"><i data-lucide="alert-triangle" class="w-4 h-4" aria-hidden="true"></i> Expired {{ invitation.expires_at|date:"M j" }}</span>
+            {% else %}
+            <span class="inline-flex items-center gap-1"><i data-lucide="clock" class="w-4 h-4" aria-hidden="true"></i> Expires in {{ invitation.expires_at|timeuntil }}</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-2 mt-4">
+        <form method="post" action="{% url 'partnerships:invitation_resend' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-muted transition-colors">
+            <i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i> Resend
+          </button>
+        </form>
+        <form method="post" action="{% url 'partnerships:invitation_revoke' public_id=invitation.public_id %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg border border-danger/30 text-danger bg-background px-4 py-2.5 text-sm min-h-[44px] hover:bg-danger/5 transition-colors">
+            <i data-lucide="x" class="w-4 h-4" aria-hidden="true"></i> Cancel invitation
+          </button>
+        </form>
+      </div>
+      {% endif %}
+      {% empty %}
+      <p class="text-sm text-muted-foreground">No pending invitation.</p>
+      {% endfor %}
+    </section>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock content %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("htmx:afterSwap", function (event) {
+    if (window.CandleApp) {
+      window.CandleApp.initLucide();
+    }
+  });
+</script>
+{% endblock extra_js %}

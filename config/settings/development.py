@@ -4,7 +4,15 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 
-SECURE_CSP = None
+# CSP is relaxed in development so Vite's dev server and HMR work without friction.
+SECURE_CSP = None  # type: ignore[assignment]
+
+# Serve static from source dirs via finders (no collectstatic needed in dev),
+# which also avoids WhiteNoise warning about a missing staticfiles/ root.
+# autorefresh is set explicitly because pytest-django forces DEBUG=False in
+# tests, which would otherwise make WhiteNoise look for a collected root.
+WHITENOISE_USE_FINDERS = True
+WHITENOISE_AUTOREFRESH = True
 
 CACHES = {
     "default": {
@@ -12,8 +20,35 @@ CACHES = {
     }
 }
 
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Local development runs a single ASGI process, so the in-memory channel layer
+# is correct and avoids depending on a local Redis server. (Production inherits
+# the Redis channel layer from base.py; the pre-installed Redis 3.2 here is not
+# compatible with redis-py 8's HELLO handshake, so we deliberately do not use it
+# for local collaboration.)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    }
+}
 
-LOGGING["loggers"]["django"]["level"] = "DEBUG"  # noqa: F405
-LOGGING["loggers"]["django"]["handlers"] = ["console"]  # noqa: F405
-LOGGING["root"]["level"] = "DEBUG"  # noqa: F405
+# Local WebSocket origins: the Vite dev server and the Django dev server.
+WEBSOCKET_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+# Development always sends email to the console, regardless of environment values.
+MAILERS = {
+    "default": {
+        "BACKEND": "django.core.mail.backends.console.EmailBackend",
+    }
+}
+
+# Keep the console readable: don't flood logs with per-query SQL.
+LOGGING["loggers"].setdefault("django.db", {"handlers": ["console"], "level": "INFO"})  # noqa: F405
+LOGGING["loggers"]["django.db"]["level"] = "INFO"  # noqa: F405
+LOGGING["loggers"]["apps"]["level"] = "DEBUG"  # noqa: F405
+LOGGING["root"]["level"] = "INFO"  # noqa: F405
+LOGGING["root"]["handlers"] = ["console"]  # noqa: F405

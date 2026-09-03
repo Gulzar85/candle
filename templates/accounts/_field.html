@@ -1,0 +1,33 @@
+{% load form_helpers %}
+<div class="space-y-1.5">
+  {% if field.field.widget.input_type != "checkbox" and field.label %}
+  <label for="{{ field.id_for_label }}" class="block text-sm font-medium mb-0.5">{{ field.label }}</label>
+  {% endif %}
+
+  {% if field.field.widget.input_type == "password" %}
+  <div x-data="{ show: false }" class="relative">
+    {{ field|inputclass_alpine:":type=show ? 'text' : 'password'" }}
+    <button type="button" @click="show = !show" class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground rounded-md" :aria-label="show ? 'Hide password' : 'Show password'" :aria-pressed="show">
+      <i data-lucide="eye" x-show="!show" class="w-4 h-4" aria-hidden="true"></i>
+      <i data-lucide="eye-off" x-show="show" class="w-4 h-4" aria-hidden="true"></i>
+    </button>
+  </div>
+  {% elif field.field.widget.input_type == "checkbox" %}
+  <label class="flex items-start gap-3 cursor-pointer">
+    {{ field }}
+    <span class="text-sm {{ field.help_text|default:'' }}">{{ field.help_text|default:field.label }}</span>
+  </label>
+  {% else %}
+  {{ field|inputclass }}
+  {% endif %}
+
+  {% if field.help_text and field.field.widget.input_type != "checkbox" %}
+  <p class="text-xs text-muted-foreground" id="{{ field.id_for_label }}-help">{{ field.help_text }}</p>
+  {% endif %}
+
+  {% for error in field.errors %}
+  <p class="text-sm text-danger flex items-center gap-1.5">
+    <i data-lucide="alert-circle" class="w-4 h-4 shrink-0" aria-hidden="true"></i> {{ error }}
+  </p>
+  {% endfor %}
+</div>

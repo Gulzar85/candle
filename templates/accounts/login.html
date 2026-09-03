@@ -1,0 +1,42 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<h1 class="text-xl font-semibold tracking-tight mb-1">Welcome back</h1>
+<p class="text-sm text-muted-foreground mb-6">Sign in to your Candle account.</p>
+
+<form method="post" action="{% url 'accounts:login' %}" novalidate>
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next }}">
+
+  <div class="space-y-4">
+    {% include "accounts/_field.html" with field=form.username %}
+    {% include "accounts/_field.html" with field=form.password %}
+  </div>
+
+  <div class="mt-4 flex items-center justify-between gap-3">
+    <label class="flex items-center gap-2 cursor-pointer">
+      {{ form.remember }}
+      <span class="text-sm text-muted-foreground">{{ form.remember.label }}</span>
+    </label>
+    <a href="{% url 'accounts:password_reset' %}" class="text-sm font-medium text-primary hover:underline">
+      Forgot password?
+    </a>
+  </div>
+
+  <div class="mt-6">
+    <button type="submit"
+            class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+      Sign in
+    </button>
+  </div>
+</form>
+
+<p class="mt-6 text-center text-sm text-muted-foreground">
+  New to Candle?
+  <a href="{% url 'accounts:register' %}" class="font-medium text-primary hover:underline">Create an account</a>
+</p>
+<p class="mt-2 text-center text-sm text-muted-foreground">
+  Haven't verified your account?
+  <a href="{% url 'accounts:resend_verification' %}" class="font-medium text-primary hover:underline">Resend verification email</a>
+</p>
+{% endblock %}

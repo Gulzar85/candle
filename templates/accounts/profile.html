@@ -1,0 +1,53 @@
+{% extends "layouts/shell.html" %}
+{% load static %}
+
+{% block content %}
+{% include "components/_messages.html" %}
+
+<div class="px-4 lg:px-6 py-6 max-w-2xl">
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight">Profile</h1>
+    <p class="text-sm text-muted-foreground mt-1">How you appear to yourself and your partner.</p>
+  </header>
+
+  <div class="space-y-6">
+    {# Avatar #}
+    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="avatar-heading">
+      <h2 id="avatar-heading" class="font-semibold mb-4">Avatar</h2>
+      <div class="flex items-center gap-5">
+        <div class="relative flex-shrink-0">
+          {% if profile.avatar %}
+          <img src="{{ profile.avatar.url }}" alt="Your avatar" class="w-20 h-20 rounded-full object-cover border border-border">
+          {% else %}
+          <div class="flex items-center justify-center w-20 h-20 rounded-full bg-muted text-muted-foreground text-xl font-semibold">
+            {{ profile.get_initials }}
+          </div>
+          {% endif %}
+        </div>
+        <div class="flex-1">
+          <p class="text-sm text-muted-foreground mb-3">PNG/JPEG, up to 2 MB, cropped to a square.</p>
+          <form x-data="{}"
+                method="post" action="{% url 'accounts:avatar_upload' %}"
+                enctype="multipart/form-data" novalidate>
+            {% csrf_token %}
+            <label class="inline-flex items-center cursor-pointer text-sm font-medium min-h-[44px] px-4 rounded-lg border border-input bg-background hover:bg-muted transition-colors">
+              <i data-lucide="upload" class="w-4 h-4 mr-2" aria-hidden="true"></i>
+              Choose image
+              <input type="file" name="avatar" accept="image/*" class="sr-only"
+                     @change="$el.closest('form').requestSubmit()">
+            </label>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    {# Profile details #}
+    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="details-heading">
+      <h2 id="details-heading" class="font-semibold mb-4">Details</h2>
+      <div id="profile-form">
+        {% include "accounts/_profile_form.html" %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock content %}

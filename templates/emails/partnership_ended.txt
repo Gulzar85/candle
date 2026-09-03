@@ -1,0 +1,5 @@
+Hi,
+
+Your partnership on Candle has ended. All of your shared history and records are preserved.
+
+Whenever you're ready, you can start a new partnership from your space: {{ partnership_url }}

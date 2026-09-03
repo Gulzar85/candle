@@ -12,23 +12,35 @@
   <link rel="apple-touch-icon" href="{% static 'icons/icon-192.png' %}">
   <link rel="icon" type="image/svg+xml" href="{% static 'icons/favicon.svg' %}">
 
-  <link rel="stylesheet" nonce="{{ csp_nonce }}" href="{% static 'dist/assets/main.css' %}">
+  <link rel="stylesheet" href="{% static 'dist/assets/main.css' %}" {% csp_nonce_attr %}>
 
   <script nonce="{{ csp_nonce }}">
+    // Single source of truth for the theme: applied inline (before any
+    // stylesheet/script loads) to avoid a flash of the wrong theme, and
+    // exposed on window.__theme so later UI (e.g. the shell's dark-mode
+    // toggle) reads/writes state through the same implementation instead of
+    // re-deriving it independently.
     (function () {
-      var theme = localStorage.getItem('theme');
-      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (theme === 'dark' || (!theme && prefersDark)) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
+      var root = document.documentElement;
+      function apply(dark) {
+        root.classList.toggle('dark', dark);
+        root.classList.toggle('light', !dark);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', dark ? '#0a0a0a' : '#ffffff');
       }
+      window.__theme = {
+        isDark: function () { return root.classList.contains('dark'); },
+        set: function (dark) {
+          localStorage.setItem('theme', dark ? 'dark' : 'light');
+          apply(dark);
+        },
+        toggle: function () { window.__theme.set(!window.__theme.isDark()); },
+      };
+      var stored = localStorage.getItem('theme');
+      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      apply(stored === 'dark' || (!stored && prefersDark));
     })();
   </script>
-
-  <script nonce="{{ csp_nonce }}" src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
-  <script nonce="{{ csp_nonce }}" defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
-  <script nonce="{{ csp_nonce }}" src="https://unpkg.com/lucide@0.525.0/dist/umd/lucide.min.js"></script>
 
   {% block extra_css %}{% endblock %}
 </head>
@@ -36,15 +48,7 @@
 
   {% block body %}{% endblock %}
 
-  <script nonce="{{ csp_nonce }}" src="{% static 'dist/assets/main.js' %}"></script>
-  <script nonce="{{ csp_nonce }}">
-    document.addEventListener('DOMContentLoaded', function () {
-      lucide.createIcons();
-    });
-    document.body.addEventListener('htmx:afterSwap', function () {
-      lucide.createIcons();
-    });
-  </script>
+  <script type="module" src="{% static 'dist/assets/main.js' %}" {% csp_nonce_attr %}></script>
 
   {% block extra_js %}{% endblock %}
 </body>
