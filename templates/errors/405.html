@@ -1,0 +1,13 @@
+{% extends "errors/error_base.html" %}
+
+{% block error_icon %}
+<i data-lucide="ban" class="w-12 h-12 text-muted-foreground"></i>
+{% endblock error_icon %}
+
+{% block error_code %}405{% endblock error_code %}
+
+{% block error_title %}Method Not Allowed{% endblock error_title %}
+
+{% block error_description %}
+This page doesn't support the action you performed.
+{% endblock error_description %}

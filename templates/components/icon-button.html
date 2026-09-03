@@ -1,0 +1,15 @@
+{% if href %}
+<a
+  href="{{ href }}"
+  aria-label="{{ label }}"
+  class="inline-flex items-center justify-center w-11 h-11 rounded-lg transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] {% if active %}bg-muted text-foreground{% endif %}"
+  {{ attributes }}
+><i data-lucide="{{ icon }}"></i></a>
+{% else %}
+<button
+  type="button"
+  aria-label="{{ label }}"
+  class="inline-flex items-center justify-center w-11 h-11 rounded-lg transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] {% if active %}bg-muted text-foreground{% endif %}"
+  {{ attributes }}
+><i data-lucide="{{ icon }}"></i></button>
+{% endif %}

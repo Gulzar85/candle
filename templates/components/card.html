@@ -1,0 +1,9 @@
+<div class="bg-card border border-border rounded-xl" {{ attributes }}>
+  {% block title %}{% endblock %}
+  {% block subtitle %}{% endblock %}
+  {% block content %}
+  <div class="{% if padding == 'none' %}{% elif padding == 'sm' %}p-4{% else %}p-6{% endif %}">
+  </div>
+  {% endblock %}
+  {% block footer %}{% endblock %}
+</div>

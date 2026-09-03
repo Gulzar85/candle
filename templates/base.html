@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Candle - A private, collaborative partner whiteboard.">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+
+  <link rel="manifest" href="{% static 'manifest.json' %}">
+  <link rel="apple-touch-icon" href="{% static 'icons/icon-192.png' %}">
+  <link rel="icon" type="image/svg+xml" href="{% static 'icons/favicon.svg' %}">
+
+  <link rel="stylesheet" nonce="{{ csp_nonce }}" href="{% static 'dist/assets/main.css' %}">
+
+  <script nonce="{{ csp_nonce }}">
+    (function () {
+      var theme = localStorage.getItem('theme');
+      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (theme === 'dark' || (!theme && prefersDark)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    })();
+  </script>
+
+  <script nonce="{{ csp_nonce }}" src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <script nonce="{{ csp_nonce }}" defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <script nonce="{{ csp_nonce }}" src="https://unpkg.com/lucide@0.525.0/dist/umd/lucide.min.js"></script>
+
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="bg-background text-foreground antialiased" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+
+  {% block body %}{% endblock %}
+
+  <script nonce="{{ csp_nonce }}" src="{% static 'dist/assets/main.js' %}"></script>
+  <script nonce="{{ csp_nonce }}">
+    document.addEventListener('DOMContentLoaded', function () {
+      lucide.createIcons();
+    });
+    document.body.addEventListener('htmx:afterSwap', function () {
+      lucide.createIcons();
+    });
+  </script>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

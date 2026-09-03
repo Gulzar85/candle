@@ -1,0 +1,13 @@
+{% extends "errors/error_base.html" %}
+
+{% block error_icon %}
+<i data-lucide="hourglass" class="w-12 h-12 text-muted-foreground"></i>
+{% endblock error_icon %}
+
+{% block error_code %}429{% endblock error_code %}
+
+{% block error_title %}Too Many Requests{% endblock error_title %}
+
+{% block error_description %}
+You've made too many requests. Please wait a moment and try again.
+{% endblock error_description %}

@@ -1,0 +1,44 @@
+{% extends "layouts/shell.html" %}
+
+{% block content %}
+<section class="flex flex-col items-center justify-center py-20 px-4 text-center">
+  <div class="flex items-center justify-center w-16 h-16 rounded-xl bg-primary mb-6">
+    <i data-lucide="flame" class="w-8 h-8 text-primary-foreground"></i>
+  </div>
+  <h1 class="text-4xl font-bold tracking-tight mb-4">
+    Your shared canvas, together.
+  </h1>
+  <p class="text-muted-foreground max-w-md mb-8">
+    A private space for two people to create, write, and build side by side.
+  </p>
+  <a href="{% url 'home' %}" class="inline-flex items-center justify-center bg-primary text-primary-foreground rounded-lg px-6 py-3 text-sm font-medium transition-colors hover:opacity-90">
+    Get started
+  </a>
+</section>
+
+<section class="hidden sm:grid sm:grid-cols-3 gap-6 max-w-3xl mx-auto pb-20 px-4">
+  <div class="bg-card border border-border rounded-xl p-6">
+    <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-muted mb-4">
+      <i data-lucide="users" class="w-5 h-5 text-muted-foreground"></i>
+    </div>
+    <h3 class="font-semibold mb-1">One partner, endlessly private</h3>
+    <p class="text-sm text-muted-foreground">Invite exactly one person. Everything stays between you two.</p>
+  </div>
+
+  <div class="bg-card border border-border rounded-xl p-6">
+    <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-muted mb-4">
+      <i data-lucide="pencil" class="w-5 h-5 text-muted-foreground"></i>
+    </div>
+    <h3 class="font-semibold mb-1">Create together in real time</h3>
+    <p class="text-sm text-muted-foreground">See each other's edits as they happen. No refresh needed.</p>
+  </div>
+
+  <div class="bg-card border border-border rounded-xl p-6">
+    <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-muted mb-4">
+      <i data-lucide="download" class="w-5 h-5 text-muted-foreground"></i>
+    </div>
+    <h3 class="font-semibold mb-1">Work offline, sync when back</h3>
+    <p class="text-sm text-muted-foreground">Keep creating without internet. Changes merge seamlessly.</p>
+  </div>
+</section>
+{% endblock content %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="flex flex-col items-center justify-center min-h-screen px-4 text-center">
+  <div class="mb-6">
+    {% block error_icon %}{% endblock error_icon %}
+  </div>
+
+  <div class="text-6xl font-bold tracking-tight mb-4">
+    {% block error_code %}{% endblock error_code %}
+  </div>
+
+  <h1 class="text-xl font-semibold mb-2">
+    {% block error_title %}{% endblock error_title %}
+  </h1>
+
+  <p class="text-sm text-muted-foreground max-w-md mx-auto mb-8">
+    {% block error_description %}{% endblock error_description %}
+  </p>
+
+  <a href="{% url 'home' %}" class="inline-flex items-center justify-center bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90">
+    Go home
+  </a>
+</div>
+{% endblock body %}

@@ -1,0 +1,13 @@
+{% extends "errors/error_base.html" %}
+
+{% block error_icon %}
+<i data-lucide="alert-triangle" class="w-12 h-12 text-muted-foreground"></i>
+{% endblock error_icon %}
+
+{% block error_code %}400{% endblock error_code %}
+
+{% block error_title %}Bad Request{% endblock error_title %}
+
+{% block error_description %}
+The request could not be understood due to malformed syntax.
+{% endblock error_description %}
