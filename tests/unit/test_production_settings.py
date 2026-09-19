@@ -21,6 +21,9 @@ import pytest
 
 _REQUIRED_ENV = {
     "DJANGO_SECRET_KEY": "x" * 50,
+    "DJANGO_DATABASE_ENGINE": "postgresql",
+    "DJANGO_CACHE_BACKEND": "redis",
+    "DJANGO_CHANNEL_LAYER_BACKEND": "inmemory",
     "DJANGO_ALLOWED_HOSTS": "example.com",
     "DJANGO_CSRF_TRUSTED_ORIGINS": "https://example.com",
     "WEBSOCKET_ALLOWED_ORIGINS": "https://example.com",

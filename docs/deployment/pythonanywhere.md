@@ -75,7 +75,9 @@ In the PythonAnywhere **Web** tab:
 2. Set the source code and working directory to `/home/cand/candle`.
 3. Set the WSGI file to the checked-in [`pythonanywhere_wsgi.py`](../../pythonanywhere_wsgi.py).
 4. Add a static mapping from `/static/` to `/home/cand/candle/staticfiles/`.
-5. Reload the web app.
+5. Add a media mapping from `/media/` to `/home/cand/candle/media/` so uploaded
+	avatars are served by PythonAnywhere's web server.
+6. Reload the web app.
 
 The WSGI entry point loads `.env` through Django's settings bootstrap and
 serves the application with the production settings.
