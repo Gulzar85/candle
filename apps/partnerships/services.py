@@ -210,9 +210,12 @@ def create_invitation(inviter: User, invitee_email: str) -> PartnershipInvitatio
     # pass the "reverse invitation exists" check and create two partnerships.
     # A transaction-scoped advisory lock keyed on the sorted email pair is
     # released automatically when this atomic transaction commits or rolls back.
-    key1, key2 = _pair_lock_keys(inviter.email, email)
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(%s::int, %s::int)", (key1, key2))
+    # Advisory locks are PostgreSQL-specific; SQLite serializes writes to the
+    # whole database file itself, so no equivalent lock is needed there.
+    if connection.vendor == "postgresql":
+        key1, key2 = _pair_lock_keys(inviter.email, email)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s::int, %s::int)", (key1, key2))
 
     if _has_connected_partnership(inviter):
         raise AlreadyConnectedError(
