@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load csp %}
 
 {% block extra_css %}
 <style {% csp_nonce_attr %}>
