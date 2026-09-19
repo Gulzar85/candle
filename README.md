@@ -44,6 +44,9 @@ theme) built on top of the deterministic canvas engine from Phase 3.
 - **WhiteNoise** (static file serving with compression)
 - **Daphne** (ASGI server)
 
+For a WSGI deployment using SQLite on PythonAnywhere, see
+[`docs/deployment/pythonanywhere.md`](docs/deployment/pythonanywhere.md).
+
 ### Frontend
 
 - **HTMX 2.0** (partial page updates)

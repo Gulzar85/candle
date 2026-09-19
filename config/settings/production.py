@@ -99,19 +99,19 @@ STORAGES = {
 # (``CONN_MAX_AGE``/``CONN_HEALTH_CHECKS`` are per-database keys — Django does
 # not read them as bare top-level settings.)
 # ---------------------------------------------------------------------------
-if not DATABASES["default"]["PASSWORD"]:
-    raise ImproperlyConfigured("POSTGRES_PASSWORD must be set in production.")
-DATABASES["default"]["CONN_MAX_AGE"] = 600
-DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
-DATABASES["default"].setdefault("OPTIONS", {})["sslmode"] = os.environ.get(
-    "POSTGRES_SSLMODE", "require"
-)
-# Without this, a genuinely unreachable host (not just a rejected connection)
-# lets psycopg fall back to the OS's own TCP connect timeout, which can be
-# tens of seconds to minutes depending on the network path — turning
-# /health/ready/ from a cheap probe into one that can hang. Discovered via a
-# real local test while writing docs/testing/production-test-plan.md: a
-# request to a closed port took over 15s to fail before this was added.
-DATABASES["default"]["OPTIONS"]["connect_timeout"] = int(
-    os.environ.get("POSTGRES_CONNECT_TIMEOUT", "5")
-)
+# SQLite does not benefit from Django's persistent connection pooling. This is
+# also the safe default for PythonAnywhere's single WSGI web worker.
+# ---------------------------------------------------------------------------
+if DATABASE_ENGINE == "sqlite":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
+else:
+    if not DATABASES["default"]["PASSWORD"]:
+        raise ImproperlyConfigured("POSTGRES_PASSWORD must be set in production.")
+    DATABASES["default"]["CONN_MAX_AGE"] = 600
+    DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+    DATABASES["default"].setdefault("OPTIONS", {})["sslmode"] = os.environ.get(
+        "POSTGRES_SSLMODE", "require"
+    )
+    DATABASES["default"]["OPTIONS"]["connect_timeout"] = int(
+        os.environ.get("POSTGRES_CONNECT_TIMEOUT", "5")
+    )

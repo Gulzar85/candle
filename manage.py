@@ -3,10 +3,14 @@
 
 import os
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 
 def main() -> None:
     """Run administrative tasks."""
+    load_dotenv(Path(__file__).resolve().parent / ".env")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
 
     try:

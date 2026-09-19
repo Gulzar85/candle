@@ -84,16 +84,25 @@ TEMPLATES = [
     },
 ]
 
-DATABASES: dict[str, dict[str, Any]] = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("POSTGRES_DB", "candle"),
-        "USER": os.environ.get("POSTGRES_USER", "candle"),
-        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
-        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
-        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+DATABASE_ENGINE = os.environ.get("DJANGO_DATABASE_ENGINE", "postgresql").lower()
+if DATABASE_ENGINE == "sqlite":
+    DATABASES: dict[str, dict[str, Any]] = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.environ.get("SQLITE_NAME", str(BASE_DIR / "db.sqlite3")),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("POSTGRES_DB", "candle"),
+            "USER": os.environ.get("POSTGRES_USER", "candle"),
+            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+            "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
+            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        }
+    }
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
@@ -102,14 +111,25 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 # always lives in PostgreSQL). Requires a Redis server that supports the RESP2
 # ``HELLO`` handshake used by redis-py 8 / channels-redis 4.3, i.e. Redis >= 6.
 # Local single-process development overrides this with the in-memory layer.
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [REDIS_URL],
-        },
-    },
-}
+CHANNEL_LAYER_BACKEND = os.environ.get(
+    "DJANGO_CHANNEL_LAYER_BACKEND",
+    "redis",
+).lower()
+if CHANNEL_LAYER_BACKEND == "inmemory":
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [REDIS_URL],
+            },
+        }
+    }
 
 # Trusted WebSocket origins. A browser WebSocket carries an ``Origin`` header;
 # we reject connections whose origin is not listed here (see the whiteboard
@@ -120,28 +140,24 @@ WEBSOCKET_ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get("WEBSOCKET_ALLOWED_ORIGINS", "").split(",") if o.strip()
 ]
 
-# socket_connect_timeout/socket_timeout bound how long a request can hang if
-# Redis is unreachable — otherwise the underlying redis-py client falls back
-# to the OS's own TCP timeout (discovered as a real issue on the equivalent
-# PostgreSQL connection while testing /health/ready/'s failure path; the same
-# principle applies here for consistency).
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": REDIS_URL,
-        # Django's RedisCache passes OPTIONS (besides serializer/pool_class/
-        # parser_class) straight through to redis-py's
-        # ConnectionPool.from_url(), so these are top-level connection kwargs
-        # — NOT nested under a CONNECTION_POOL_KWARGS key (that's the
-        # third-party django-redis package's different OPTIONS shape).
-        # Verified against the installed django/core/cache/backends/redis.py
-        # source directly, not assumed.
-        "OPTIONS": {
-            "socket_connect_timeout": 5,
-            "socket_timeout": 5,
+CACHE_BACKEND = os.environ.get("DJANGO_CACHE_BACKEND", "redis").lower()
+if CACHE_BACKEND == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "socket_connect_timeout": 5,
+                "socket_timeout": 5,
+            },
         },
-    },
-}
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
