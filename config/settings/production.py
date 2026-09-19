@@ -87,6 +87,7 @@ STORAGES = {
 }
 
 # ---------------------------------------------------------------------------
-# Database connection pooling.
+# SQLite does not benefit from Django's persistent connection pooling. This is
+# also the safe default for PythonAnywhere's single WSGI web worker.
 # ---------------------------------------------------------------------------
-CONN_MAX_AGE = 600
+CONN_MAX_AGE = 0 if DATABASE_ENGINE == "sqlite" else 600

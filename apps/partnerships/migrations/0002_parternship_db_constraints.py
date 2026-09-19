@@ -20,6 +20,9 @@ def install_member_triggers(apps: Any, schema_editor: Any) -> None:
     These are enforced with a BEFORE trigger on ``partnerships_partnershipmember``
     that runs for INSERT and UPDATE.
     """
+    if schema_editor.connection.vendor != "postgresql":
+        return
+
     # Guard against double-application by dropping first (idempotent).
     schema_editor.execute("DROP FUNCTION IF EXISTS enforce_partnership_member_rules() CASCADE")
     schema_editor.execute(
@@ -79,6 +82,9 @@ def install_member_triggers(apps: Any, schema_editor: Any) -> None:
 
 
 def uninstall_member_triggers(apps: Any, schema_editor: Any) -> None:
+    if schema_editor.connection.vendor != "postgresql":
+        return
+
     schema_editor.execute(
         "DROP TRIGGER IF EXISTS partnership_member_rules_trigger ON partnerships_partnershipmember"
     )
