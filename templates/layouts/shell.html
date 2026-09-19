@@ -31,7 +31,7 @@
     }
   }"
   x-effect="mobileMenuOpen ? null : (this.lastFocused ? requestAnimationFrame(() => { this.lastFocused.focus(); this.lastFocused = null; }) : null)"
-  class="h-dvh overflow-hidden">
+  class="h-dvh overflow-hidden flex">
 
   {# Desktop Sidebar #}
   <aside
@@ -204,7 +204,7 @@
         </div>
       </div>
 
-      <div class="flex-1 lg:hidden"></div>
+      <div class="flex-1"></div>
 
       <div class="flex items-center gap-1">
         <button
@@ -230,7 +230,7 @@
               {% if user.profile.avatar %}
               {% include "components/avatar.html" with size="sm" image_url=user.profile.avatar.url name=user.profile.get_display_name %}
               {% else %}
-              {% include "components/avatar.html" with size="sm" initials=user.profile.get_initials name=user.profile.get_display_name %}
+              {% include "components/avatar.html" with size="sm" initials=user.profile.get_initials name=user.profile.get_display_name accent_color=user.profile.accent_color %}
               {% endif %}
               <i data-lucide="chevron-down" class="w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
             </button>

@@ -468,3 +468,116 @@ Based on risk and dependency:
 | 13 | Service worker security reviewed (cross-account) | ⬜ Pending |
 | 14 | Multi-tab/device testing | ⬜ Pending |
 | 15 | Production readiness report | ⬜ Pending |
+
+---
+
+## Addendum — 2026-09-04 post-implementation re-audit
+
+This document was written 2026-09-02 as a read-only audit before any Phase 8
+implementation began. Work since then (both this pass and, for several
+findings, work that had already landed in the codebase before this pass
+started) has closed a number of the findings above. Per this project's
+established convention (see `docs/architecture/phase-2-audit.md` §10.1 for
+the same pattern), the original findings above are **left unedited** — this
+addendum records what was re-verified against the current code, what's now
+fixed, what's genuinely still open, and one new finding this pass discovered
+that the original audit missed. Line numbers in the original findings above
+have drifted as files changed; treat file:line citations in *this* addendum
+as current.
+
+### Confirmed fixed (already true before this pass started, re-verified directly)
+
+| Finding | Verification |
+|---|---|
+| S-1 (hardcoded `SECRET_KEY` fallback) | `config/settings/base.py` — `os.environ.get("DJANGO_SECRET_KEY", "")`, empty-string fallback only, no insecure literal. `production.py` raises `ImproperlyConfigured` if unset. |
+| S-2 (asgi/wsgi default to development) | `config/asgi.py:16`, `config/wsgi.py:7` — both `os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")`. |
+| S-3 (`CSRF_TRUSTED_ORIGINS` not enforced) | `production.py` raises if empty. |
+| S-4 (no `config/settings/test.py`) | Exists, mirrors production security settings, wired via `pyproject.toml`. |
+| S-5 (missing `SECURE_REFERRER_POLICY`/`SESSION_COOKIE_AGE`/`SESSION_EXPIRE_AT_BROWSER_CLOSE`/`DATA_UPLOAD_MAX_*`) | All present in `production.py`. |
+| A-1 (no session invalidation on password reset) | `PasswordResetConfirmView.form_valid` calls `_invalidate_other_sessions(...)`. |
+| A-2 (no logout-all-devices) | `logout_all_devices` view exists (`apps/accounts/views.py`). |
+| A-7 (session age not overridden) | `SESSION_COOKIE_AGE = 86400` in `production.py` (same fact as S-5). |
+| W-1 (no per-user WS connection cap) | `MAX_CONNECTIONS_PER_USER = 10`, enforced via `_reserve_connection_slot`/`_release_connection_slot` (`apps/whiteboard/consumers.py`). |
+| E-1 (health check superficial) | `apps/core/views.py` `health_check` — `/health/ready/` does a real DB `SELECT 1` + cache `set`/`get` probe, 503 on failure. |
+| E-2 (no structured logging) | Partially fixed: `apps/core/logging.py` has a real `JSONFormatter`, toggled by `LOG_JSON`. **Correlation/request IDs are still absent** — carried forward below, not fully closed. |
+| DOC-6 (`.env.example` missing production vars) | Current `.env.example` documents `SESSION_COOKIE_AGE`, `SECURE_REFERRER_POLICY`, `DATA_UPLOAD_MAX_*`, `LOG_JSON`, `POSTGRES_SSLMODE`, and (this pass) `MAX_REQUEST_BODY_BYTES`. |
+| PWA-2 (no `clearOwnerPartition()` on logout) | Re-verified via grep across `templates/`: still true that it's never called. **Not a bug** — see `docs/architecture/offline-architecture.md` §7, corrected during the Phase 6 pass of this project to document this as a deliberate "preserve, never destroy" choice (clearing on logout would risk deleting still-unsynced offline work). Downgraded from a defect to a documented, intentional limitation — no code change needed. |
+
+### New findings this pass discovered (not in the original audit)
+
+| Finding | Details | Fix applied |
+|---|---|---|
+| **Request-body-size setting mismatch** | `apps/whiteboard/limits.py:30` defined a whiteboard-specific `MAX_REQUEST_BODY_BYTES = 250_000` (250 KB) that `docs/api/whiteboard.md` and `docs/architecture/whiteboard-operations.md` both wrongly documented as the enforced HTTP body cap. The *actual* enforcing code, `apps/core/middleware.py`'s `RequestSizeGuard`, reads a differently-named global setting (`settings.MAX_REQUEST_BODY_BYTES`, no `WHITEBOARD_` prefix) that was never set anywhere, so it silently fell back to its own 5 MB default. The 250 KB constant was dead — zero references outside its own definition. | Removed the dead constant; corrected both docs to state the real, enforced 5 MB global limit; added `MAX_REQUEST_BODY_BYTES` as a documented, configurable `.env.example` entry. 5 MB was kept (not tightened to 250 KB) because it's the value consistent with a legitimate full-size batch: `MAX_OPERATION_PAYLOAD_BYTES` (100 KB) × `MAX_BATCH_OPERATIONS` (50) ≈ 5 MB — tightening to 250 KB would have started rejecting valid batches. |
+| **`SECRET_KEY` minimum weaker than Django's own `check --deploy` threshold** | `production.py` only required ≥32 chars, but an actual `manage.py check --deploy` run (see below) flagged `security.W009` (Django recommends ≥50 chars + character diversity) even though 32-char keys satisfied the code's own guard. | Raised the enforced minimum to 50 chars, matching Django's threshold and the generation method `.env.example` already documented (`secrets.token_urlsafe(50)`). Verified: `check --deploy` is now clean on a properly-generated key (see below). |
+| **No connection timeout on PostgreSQL or Redis** | Discovered while writing a failure-injection test for `/health/ready/` (see `docs/testing/production-test-plan.md`): pointing `POSTGRES_PORT`/`REDIS_URL` at a genuinely unreachable address showed neither connection had any configured timeout, so a real outage (not just a rejected connection) could hang a request for 14+ seconds instead of failing fast — defeating the purpose of a cheap, quick readiness probe. | Added `connect_timeout` (default 5s, env `POSTGRES_CONNECT_TIMEOUT`) to the PostgreSQL `OPTIONS` in `production.py`, and `socket_connect_timeout`/`socket_timeout` (default 5s each) to the Redis `CACHES["default"]["OPTIONS"]` in `base.py`. Each verified independently and effective (~5s DB-only, ~2-3s cache-only) by pointing exactly one dependency at an unreachable address at a time. Note: the Redis fix's first attempt used the wrong `OPTIONS` shape (`CONNECTION_POOL_KWARGS`, which is `django-redis`'s API, not Django's own native `RedisCache`) and failed loudly with a clear `TypeError` on the first real test — corrected by reading the installed Django source directly rather than continuing to guess. |
+
+### `manage.py check --deploy` — actually run (item 3 of the Definition of Done above)
+
+Run against `config.settings.production` with placeholder-but-valid required env vars. First run (before the `SECRET_KEY` fix, using a 43-char test key, no SMTP backend configured):
+
+```
+ERRORS:
+?: (mail.E001) Your MAILERS setting uses a development-only email backend
+   in the 'default' entry (django.core.mail.backends.console.EmailBackend).
+WARNINGS:
+?: (security.W009) Your SECRET_KEY has less than 50 characters...
+```
+
+After raising the `SECRET_KEY` minimum to 50 and generating a real key via
+`secrets.token_urlsafe(50)`: `security.W009` gone. The remaining `mail.E001`
+is not a code gap — it's Django correctly detecting that this particular test
+invocation didn't set `DJANGO_EMAIL_BACKEND` to an SMTP backend, which
+`.env.example` already documents as a required production override
+(`# Development defaults to console. In production set the SMTP backend +
+creds.`). Confirmed with all required production env vars *and* an SMTP
+backend name set:
+
+```
+System check identified no issues (0 silenced).
+```
+
+`check --deploy` is clean when the documented environment variables are
+actually set. This is a citable, reproducible result — not a claim.
+
+### Confirmed still genuinely open (re-verified, no change made — reasons noted)
+
+| Finding | Status |
+|---|---|
+| O-1 / SZ-2 (HTTP body has no size guard) | **Partially resolved, differently than the original finding described.** `RequestSizeGuard` middleware does exist and does enforce a global 5 MB cap (see "New findings" above) — the original claim that no guard exists at all is now false. What's still true: there's no *whiteboard-specific*, tighter limit distinct from the global one. Not fixed further this pass — 5 MB is judged an acceptable, already-enforced ceiling; a whiteboard-specific tier isn't clearly justified given it's consistent with the real per-batch maximum. |
+| A-3 (no rate limit on `PasswordResetConfirmView`) | **Fixed this pass.** Added `ratelimit.check("password_reset_confirm", ...)` (6/900s, keyed by IP + uidb64) mirroring the existing pattern on `PasswordResetView`/`LoginView`. New test: `tests/accounts/test_password_reset.py::test_reset_confirm_rate_limited_after_six_attempts`. |
+| DB-1 (`POSTGRES_PASSWORD` not validated) | **Fixed this pass.** `production.py` now raises `ImproperlyConfigured` if empty, mirroring the `SECRET_KEY` guard. Verified: raises with an empty password, loads cleanly with a real one. |
+| DB-4 (redundant `Whiteboard.status` index) | **Fixed this pass.** Removed `db_index=True` from the field (kept the named `Meta.index`). Migration `0003_remove_whiteboardoperation_idx_op_board_seq_and_more`. |
+| DB-5 (redundant `WhiteboardOperation (whiteboard, sequence)` index) | **Fixed this pass.** Removed the duplicate `Meta.index`; the `uniq_op_sequence_per_board` unique constraint already backs that exact query pattern. Same migration as DB-4. |
+| Q-1 (dead constants) | **Fixed this pass**, in a corrected form. `MAX_PAYLOAD_BYTES` (`models.py`) removed — confirmed zero references. `limits.MAX_REQUEST_BODY_BYTES` removed too, but for the more specific reason described in "New findings" above (it wasn't just unenforced, it actively conflicted with the real 5 MB middleware default and two docs pages). The claim that "the validator.py comment references a non-existent `RequestSizeGuard`" is now false — the middleware exists — so that part of Q-1 needed no fix. |
+| SF-1 (misleading media-serving comment) | **Fixed this pass.** `config/urls.py` comment corrected to accurately state WhiteNoise only serves `STATIC_URL`, never `MEDIA_URL`; production needs a reverse proxy for `/media/`. |
+| DP-1, SC-1, SC-2 (no snapshotting/compaction, no per-board object cap) | **Still open**, not addressed this pass. Genuinely requires either a documented, justified threshold decision or actual implementation — deferred; see `docs/performance/whiteboard-benchmarks.md` (new, this pass) for the current local measurement and the trigger condition for revisiting. |
+| E-2 (no correlation/request IDs in structured logs) | **Still open.** `JSONFormatter` exists and works but carries no per-request correlation id. Noted as a known gap in the final readiness report rather than silently dropped. |
+| CI-1, CI-2, CI-3 (no CI/CD, no Docker, no deployment docs) | CI-1 addressed this pass (`.github/workflows/ci.yml` authored — see readiness report for the important caveat that it has never run against a real runner). CI-2 (Docker) intentionally **not** added — no evidence a container deployment target exists or was requested; documented as a deployment-architecture *choice point* in `docs/deployment/production-architecture.md` rather than assumed. CI-3 addressed via the new `docs/deployment/`/`docs/operations/` docs this pass. |
+| T-1 through T-4 (no E2E, thin security integration tests, no failure-injection, no load tests) | **Still open**, and honestly so — see `docs/testing/production-test-plan.md` (new, this pass), which describes these as tests *not yet written*, not tests that exist. Failure-injection was partially exercised manually (not automated): mock-based fault injection on `django.db.connection.cursor()` and `cache.set()` confirmed `/health/ready/` degrades to 503 correctly, and a real connection-timeout bug was found and fixed along the way — see `docs/testing/production-test-plan.md` and the readiness report for the full account. |
+| DOC-1 through DOC-5 | Addressed this pass — see the readiness report's document index. |
+| PWA-1 (IndexedDB single shared DB, `getWhiteboard()` doesn't re-check `owner_key`) | **Still open, judged acceptable as-is.** Re-read `frontend/src/whiteboard/local-store.ts`: `getWhiteboard()` does look up by a key that already embeds the whiteboard's server-assigned UUID, not a guessable value, and every *listing* query (`getPendingOperations`, `getConflictsForBoard`, etc.) does filter by `owner_key`. A direct-key lookup lacking an *additional* owner check is defense-in-depth, not a live cross-account leak, since the UUID itself isn't attacker-controlled or guessable. Not changed this pass — flagged as a low-priority hardening item, not re-classified as higher severity. |
+
+### Recommended Implementation Order (§23) — status update
+
+- **Phase 8A** items 1, 2 (removed insecure fallback — already true), 4 (test.py — already existed), 8 (session invalidation — already true) were already done before this pass. Items 5 (body size guard — now correctly documented, not re-tightened), 6 (WS connection limit — already true), 7 (health check — already true), 9 (`check --deploy` — actually run this pass, documented above) are now all closed.
+- **Phase 8B, 8C, 8D**: addressed this pass via the new docs listed in `docs/production-readiness-report.md`, with the explicit, honest exception of items that require a real deployment target to actually perform (Docker, a live CI run, a real backup/restore drill beyond a local smoke test, real load testing) — those are documented as procedure and marked deferred-to-deployment in the readiness report, not fabricated as completed.
+
+### Definition of Done Checklist (§24) — status update
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Production audit complete | ✅ (this document + this addendum) |
+| 2 | Security hardening (S-1 through S-5, O-1, W-1, A-1) | ✅ All confirmed fixed |
+| 3 | Production settings validated (`check --deploy`) | ✅ Actually run, clean when properly configured (see above) |
+| 4 | Health checks enhanced (DB + Redis) | ✅ Already true |
+| 5 | CI/CD pipeline created | ✅ Authored (`.github/workflows/ci.yml`) — **never executed against a real runner**, see readiness report |
+| 6 | Docker + deployment docs | Docker: not added (no evidence of a container target — documented as a choice point). Deployment docs: ✅ |
+| 7 | Backup/restore documented + tested | ✅ Documented; **local smoke test only** (pg_dump/restore against local dev Postgres) — not a production drill, see readiness report |
+| 8 | Disaster recovery documented | ✅ Procedure documented, not rehearsed against a real incident |
+| 9 | Security checklist complete | ✅ |
+| 10 | Production runbook complete | ✅ |
+| 11 | E2E test scenario documented | ✅ Documented as a plan, tests not yet written |
+| 12 | Security integration tests expanded | Not expanded this pass — documented as open in the test plan |
+| 13 | Service worker security reviewed (cross-account) | ✅ Re-reviewed this pass (PWA-1/PWA-2, above) |
+| 14 | Multi-tab/device testing | Not performed this pass — no real device lab; documented as deferred |
+| 15 | Production readiness report | ✅ `docs/production-readiness-report.md` |

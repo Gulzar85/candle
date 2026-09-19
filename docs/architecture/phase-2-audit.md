@@ -271,9 +271,43 @@ Everything else is documented as deliberately deferred (see §10).
 | Item | Why deferred |
 |---|---|
 | Full mypy cleanup of legacy accounts files | Real but non-blocking; shared helpers moved to clean code |
-| Real theme preference wiring | No product requirement for this phase |
 | Absolute `SESSION_COOKIE_AGE` policy | Per-login expiry already implemented; document only |
 | Production background queue (Celery/RQ) | Explicitly out of scope; thread-based delivery is adequate now, migration path documented |
+
+## 10.1 Addendum — post-implementation re-audit
+
+The items below were found on a later pass, after the partnership/invitation
+system in §§7-9 above was actually built (not merely planned). Recorded here
+rather than rewriting history above.
+
+- **5.1, 5.2, 5.3 confirmed fixed**: `apps/core/emailing.py` sends off the
+  request path via a guarded daemon thread for non-in-process backends;
+  `PasswordChangeView.form_valid` calls `update_session_auth_hash`; account
+  lifecycle policy is documented in `docs/architecture/shared-resource-access.md`.
+- **5.5 resolved, not "deferred"**: the theme context processor
+  (`apps.core.context_processors.theme`) was never wired to any template
+  (`{{ theme }}` had zero references) and always returned the hardcoded
+  string `"light"`. The real theme mechanism is now entirely client-side
+  (`window.__theme` in `base.html`, System/Light/Dark, `localStorage`-backed).
+  Rather than "wire the placeholder up", the placeholder was **deleted**
+  (context processor file removed, its registration dropped from
+  `TEMPLATES.OPTIONS.context_processors`) — keeping a same-named,
+  never-invoked stand-in next to the real implementation is exactly the kind
+  of thing that misleads the next person to touch this code.
+- **New finding**: `apps/partnerships/views.py` defined a `_safe_redirect`
+  helper (open-redirect-safe `next` handling) that was **never called** —
+  every view in the file redirects to a fixed, hardcoded internal target, so
+  there was no live open-redirect surface, but the unused helper implied a
+  redirect-safety mechanism that wasn't actually wired to anything. Removed,
+  along with the now-unused `url_has_allowed_host_and_scheme` import.
+- Everything else audited on this pass (the `Partnership`/`PartnershipMember`/
+  `PartnershipInvitation`/`PartnershipEvent`/`Notification` models, the
+  two-member PL/pgSQL trigger in `0002_parternship_db_constraints.py`, the
+  advisory-lock mutual-invitation race handling in
+  `services.create_invitation`, the centralized `policies.py`, token hashing
+  in `tokens.py`, admin token-hiding, and the IDOR/concurrency/enumeration
+  test suites in `tests/partnerships/`) matched or exceeded this document's
+  own §§7-9 goals with no further changes needed.
 
 ## 11. Testing gaps (Phase 2 addresses)
 

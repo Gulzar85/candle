@@ -17,28 +17,51 @@
   <script nonce="{{ csp_nonce }}">
     // Single source of truth for the theme: applied inline (before any
     // stylesheet/script loads) to avoid a flash of the wrong theme, and
-    // exposed on window.__theme so later UI (e.g. the shell's dark-mode
-    // toggle) reads/writes state through the same implementation instead of
-    // re-deriving it independently.
+    // exposed on window.__theme so later UI (the shell's quick toggle, the
+    // Settings > Appearance control) reads/writes state through the same
+    // implementation instead of re-deriving it independently.
+    //
+    // Stored mode is one of 'system' | 'light' | 'dark'. 'system' keeps
+    // following the OS preference live (via a matchMedia listener) until the
+    // visitor explicitly picks light or dark.
     (function () {
       var root = document.documentElement;
-      function apply(dark) {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+
+      function resolvedDark(mode) {
+        return mode === 'dark' || (mode === 'system' && media.matches);
+      }
+
+      function apply(mode) {
+        var dark = resolvedDark(mode);
         root.classList.toggle('dark', dark);
         root.classList.toggle('light', !dark);
         var m = document.querySelector('meta[name="theme-color"]');
         if (m) m.setAttribute('content', dark ? '#0a0a0a' : '#ffffff');
       }
+
       window.__theme = {
+        getMode: function () { return localStorage.getItem('theme') || 'system'; },
         isDark: function () { return root.classList.contains('dark'); },
+        setMode: function (mode) {
+          if (mode === 'system') {
+            localStorage.removeItem('theme');
+          } else {
+            localStorage.setItem('theme', mode);
+          }
+          apply(mode);
+        },
         set: function (dark) {
-          localStorage.setItem('theme', dark ? 'dark' : 'light');
-          apply(dark);
+          // Back-compat binary setter: an explicit light/dark choice.
+          window.__theme.setMode(dark ? 'dark' : 'light');
         },
         toggle: function () { window.__theme.set(!window.__theme.isDark()); },
       };
-      var stored = localStorage.getItem('theme');
-      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      apply(stored === 'dark' || (!stored && prefersDark));
+
+      apply(window.__theme.getMode());
+      media.addEventListener('change', function () {
+        if (window.__theme.getMode() === 'system') apply('system');
+      });
     })();
   </script>
 

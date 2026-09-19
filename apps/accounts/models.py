@@ -161,6 +161,26 @@ class User(AbstractBaseUser, PermissionsMixin):
         return raw.encode("ascii")
 
 
+# Preset palette offered for a profile's accent color — the same hues used for
+# whiteboard stroke swatches, so a partner's identity color feels native to
+# the drawing surface rather than an arbitrary picker value.
+ACCENT_COLOR_CHOICES = [
+    "#2563eb",  # blue
+    "#dc2626",  # red
+    "#16a34a",  # green
+    "#d97706",  # amber
+    "#7c3aed",  # violet
+    "#db2777",  # pink
+    "#0891b2",  # cyan
+    "#171717",  # near-black
+]
+
+
+def default_accent_color() -> str:
+    """Pick a random preset so two fresh profiles are visually distinct by default."""
+    return secrets.choice(ACCENT_COLOR_CHOICES)
+
+
 class Profile(models.Model):
     """Optional, product-level identity information kept apart from the User.
 
@@ -174,6 +194,13 @@ class Profile(models.Model):
     )
     display_name = models.CharField(max_length=150, blank=True)
     avatar = models.ImageField(upload_to="avatars/", blank=True)
+    bio = models.CharField(max_length=280, blank=True, help_text="A short line about you.")
+    pronouns = models.CharField(max_length=30, blank=True)
+    accent_color = models.CharField(
+        max_length=7,
+        default=default_accent_color,
+        help_text="Your identity color across avatars and presence.",
+    )
     timezone = models.CharField(max_length=64, default="UTC", blank=True)
     locale = models.CharField(max_length=10, default="en")
     created_at = models.DateTimeField(auto_now_add=True)

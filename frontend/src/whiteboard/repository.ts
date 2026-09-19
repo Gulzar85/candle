@@ -86,6 +86,36 @@ export interface ApiError {
   readonly retry_after?: number;
 }
 
+/** One humanized entry from GET /api/whiteboards/<id>/history/ */
+export interface HistoryEntry {
+  readonly sequence: number;
+  readonly operation_type: string;
+  readonly text: string;
+  readonly count: number;
+  readonly created_at: string;
+  readonly can_restore: boolean;
+}
+
+/** Response from GET /api/whiteboards/<id>/history/ */
+export interface HistoryResponse {
+  readonly entries: readonly HistoryEntry[];
+  readonly version: number;
+  readonly count: number;
+}
+
+/** Response from POST /api/whiteboards/<id>/restore/ */
+export interface RestoreResponse {
+  readonly acks: readonly OperationAck[];
+  readonly version: number;
+  readonly applied: number;
+}
+
+/** Response from POST /api/whiteboards/<id>/import/ */
+export interface ImportResponse {
+  readonly imported: number;
+  readonly version: number;
+}
+
 function getCsrfToken(): string {
   const meta = document.querySelector('meta[name="csrf-token"]');
   return meta instanceof HTMLMetaElement ? meta.content : "";
@@ -171,6 +201,50 @@ export class WhiteboardRepository {
       headers: { Accept: "application/json" },
     });
     return handleResponse<OperationsListResponse>(response);
+  }
+
+  /** Load humanized history entries, newest-first. */
+  async loadHistory(beforeSequence?: number, limit: number = 50): Promise<HistoryResponse> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (beforeSequence !== undefined) params.set("before_sequence", String(beforeSequence));
+    const response = await fetch(`${this.apiBase}/history/?${params}`, {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    return handleResponse<HistoryResponse>(response);
+  }
+
+  /** Restore the board to an earlier point in its own history. Requires
+   * connectivity -- there is no offline path for this (see
+   * docs/architecture/whiteboard-history.md). */
+  async restore(
+    operationId: string,
+    baseVersion: number,
+    targetSequence: number,
+  ): Promise<RestoreResponse> {
+    const response = await fetch(`${this.apiBase}/restore/`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        operation_id: operationId,
+        base_version: baseVersion,
+        target_sequence: targetSequence,
+      }),
+    });
+    return handleResponse<RestoreResponse>(response);
+  }
+
+  /** Import a previously-exported JSON board. Additive unless `clearFirst`. */
+  async importBoard(payload: unknown, clearFirst: boolean = false): Promise<ImportResponse> {
+    const response = await fetch(`${this.apiBase}/import/`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ ...(payload as object), clear_first: clearFirst }),
+    });
+    return handleResponse<ImportResponse>(response);
   }
 
   /** Convert a ServerObject (from loadState) into a local Stroke. */

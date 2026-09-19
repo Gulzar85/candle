@@ -728,3 +728,18 @@ def end_partnership(partnership: Partnership, actor: User) -> None:
                     "partnership_url": _absolute(reverse("partnerships:partnership_home")),
                 },
             )
+
+    # A member's WebSocket connection to the whiteboard may still be open even
+    # though their write access was already re-checked per-message; a purely
+    # passive listener would otherwise keep receiving broadcasts through it
+    # indefinitely. Kick it once this transaction is durably committed — a
+    # local import keeps the normal partnerships -> whiteboard dependency
+    # direction intact (whiteboard already imports partnerships, not the
+    # reverse) rather than adding a module-level coupling for one call site.
+    transaction.on_commit(lambda: _notify_whiteboard_access_revoked(locked.public_id))
+
+
+def _notify_whiteboard_access_revoked(partnership_public_id: object) -> None:
+    from apps.whiteboard.realtime_signals import request_reauthorization
+
+    request_reauthorization(str(partnership_public_id))

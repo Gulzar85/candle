@@ -139,7 +139,16 @@ The settings module is controlled by `DJANGO_SETTINGS_MODULE`, defaulting to `co
 
 ### Pre-commit
 
-Run linting and type checking before committing:
+Ruff (lint + format) and mypy run automatically on `git commit` via
+[pre-commit](https://pre-commit.com/), configured in `.pre-commit-config.yaml`.
+One-time setup after installing the `dev` extra:
+
+```bash
+pre-commit install
+```
+
+To run the same checks manually (e.g. against the whole tree, or before the
+hook is installed):
 
 ```bash
 ruff check .

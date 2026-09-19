@@ -3,14 +3,14 @@
  *
  * SyncEngine uses an in-memory fake WhiteboardLocalStoreLike so it runs in
  * Node without IndexedDB, exercising:
- *   - durable persistence before submission
- *   - crash recovery (SUBMITTING -> PENDING)
- *   - pending queue push with conflict reconciliation
- *   - partial failure (one op confirmed, another retried)
- *   - retry / backoff
- *   - stale-version re-reconciliation
- *   - idempotency-safe confirmation
- *   - never loses operations
+ *  - durable persistence before submission
+ *  - crash recovery (SUBMITTING -> PENDING)
+ *  - pending queue push (no client-side conflict quarantine)
+ *  - partial failure (one op confirmed, another retried)
+ *  - retry / backoff
+ *  - stale-version re-reconciliation
+ *  - idempotency-safe confirmation
+ *  - never loses operations
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -84,6 +84,12 @@ class FakeStore implements WhiteboardLocalStoreLike {
   }
   async saveConflict(record: LocalConflictRecord): Promise<void> {
     this.conflicts.set(record.operation_id, record);
+  }
+  async resolveConflict(operationId: string): Promise<void> {
+    const conflict = this.conflicts.get(operationId);
+    if (!conflict) return;
+    this.conflicts.delete(operationId);
+    this.ops.set(operationId, { ...conflict.operation, status: "PENDING", retry_count: 0 });
   }
   async compactConfirmedOperations(
     _whiteboardId: string,
@@ -256,20 +262,25 @@ describe("SyncEngine", () => {
       expect(mock.submitBatch).toHaveBeenCalledTimes(1);
     });
 
-    it("marks a destructive op as conflict when server advanced", async () => {
+    it("rebases a stale destructive op and submits it instead of quarantining", async () => {
       await init();
       // Local clear generated against version 0, but server is now at version 5.
       const clearEnv = { ...makeEnvelope(0, "clear_canvas"), payload: {} };
       await engine.submit(clearEnv, 0);
       // Bump the engine's view of the server version so push sees the gap.
       engine.setServerVersionGetter(() => 5);
+      mock.submitBatch.mockResolvedValue(ACK(clearEnv, 6));
 
       engine.triggerSync();
       await vi.advanceTimersByTimeAsync(100);
 
-      const conflicts = await store.getConflictsForBoard("wb-1");
-      expect(conflicts.length).toBeGreaterThan(0);
-      expect(engine.phase).toBe("conflict");
+      // The op is submitted against the anchored (latest) base — no conflict
+      // record, no "needs attention" panel, message reaches the server.
+      expect(await store.getConflictsForBoard("wb-1")).toHaveLength(0);
+      const envelopes = mock.submitBatch.mock.calls[0][0] as OperationEnvelope[];
+      expect(envelopes[0].base_version).toBe(5);
+      expect(await store.getPendingOperations("wb-1")).toHaveLength(0);
+      expect(engine.phase).toBe("synced");
     });
 
     it("handles partial failure: A confirmed, B stays pending", async () => {
@@ -346,8 +357,8 @@ describe("SyncEngine", () => {
     });
   });
 
-  describe("conflict surfaced, never silently deleted", () => {
-    it("preserves the op in conflicts store on a permanent rejection", async () => {
+  describe("permanent rejection (no conflict quarantine)", () => {
+    it("marks the op FAILED and never creates a conflict record", async () => {
       await init();
       const env = makeEnvelope(0);
       await engine.submit(env, 0);
@@ -356,9 +367,133 @@ describe("SyncEngine", () => {
       engine.triggerSync();
       await vi.advanceTimersByTimeAsync(100);
 
-      const conflicts = await store.getConflictsForBoard("wb-1");
-      expect(conflicts.length).toBe(1);
-      expect(conflicts[0].operation_id).toBe(env.operation_id);
+      // Failure is surfaced as a save error; the op is kept (FAILED), and the
+      // "needs attention" conflict machinery is never engaged.
+      expect(await store.getConflictsForBoard("wb-1")).toHaveLength(0);
+      const ops = await store.listOperationsForBoard("wb-1");
+      expect(ops.length).toBe(1);
+      expect(ops[0].status).toBe("FAILED");
+      expect(engine.phase).toBe("error");
+    });
+  });
+
+  describe("legacy quarantined history healing", () => {
+    const seedLegacyConflict = async (env: OperationEnvelope): Promise<void> => {
+      const op = makeLocalOp(env.operation_id, "CONFLICT", env.base_version, 1);
+      await store.saveConflict({
+        operation_id: env.operation_id,
+        whiteboard_id: "wb-1",
+        owner_key: "owner-1",
+        operation: { ...op, status: "CONFLICT" },
+        reason: "legacy from a buggy build",
+        detected_at: Date.now(),
+        status: "CONFLICT",
+        updated_at: Date.now(),
+      });
+    };
+
+    it("requeueConflicts moves a legacy quarantine back into PENDING", async () => {
+      await init();
+      const env = makeEnvelope(0);
+      await seedLegacyConflict(env);
+      expect(await store.getConflictsForBoard("wb-1")).toHaveLength(1);
+
+      // Op is already applied server-side: the replayed submit is a dup ack.
+      mock.submitBatch.mockResolvedValue(ACK(env, 1, true));
+      expect(await engine.requeueConflicts()).toBe(1);
+      engine.triggerSync();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await store.getConflictsForBoard("wb-1")).toHaveLength(0);
+      expect(await store.getPendingOperations("wb-1")).toHaveLength(0);
+      expect(engine.phase).toBe("synced");
+    });
+
+    it("resolveAllConflicts clears a legacy quarantine once it goes through", async () => {
+      await init();
+      const env = makeEnvelope(0);
+      await seedLegacyConflict(env);
+
+      mock.submitBatch.mockResolvedValue(ACK(env, 1));
+      await engine.resolveAllConflicts();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await store.getConflictsForBoard("wb-1")).toHaveLength(0);
+      expect(await store.getPendingOperations("wb-1")).toHaveLength(0);
+      expect(engine.phase).toBe("synced");
+    });
+
+    it("requeueConflicts does nothing when the conflict store is empty", async () => {
+      await init();
+      expect(await engine.requeueConflicts()).toBe(0);
+    });
+  });
+
+  describe("ws-first submission (pushHttp=false)", () => {
+    it("persists the op without scheduling an HTTP pass", async () => {
+      await init();
+      const env = makeEnvelope(0);
+      await engine.submit(env, 0, false);
+
+      // Durable record exists but NO HTTP request was fired.
+      expect(store.countOps()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mock.submitBatch).not.toHaveBeenCalled();
+      expect((await store.getPendingOperations("wb-1")).length).toBe(1);
+    });
+
+    it("markOperationConfirmed removes the op and lands on synced", async () => {
+      await init();
+      const env = makeEnvelope(0);
+      await engine.submit(env, 0, false);
+
+      await engine.markOperationConfirmed(env.operation_id, 1);
+
+      expect(await store.getPendingOperations("wb-1")).toHaveLength(0);
+      expect(engine.pendingCount).toBe(0);
+      expect(engine.serverVersion).toBe(1);
+      expect(engine.phase).toBe("synced");
+    });
+
+    it("a create_stroke is never quarantined when the live version advanced", async () => {
+      await init();
+      const env = makeEnvelope(0);
+      await engine.submit(env, 0, false);
+
+      // The realtime layer moves the server on; without any HTTP round trip.
+      engine.setServerVersionGetter(() => 42);
+      mock.submitBatch.mockResolvedValue(ACK(env, 43));
+      engine.triggerSync();
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Rebase path: confirmed via HTTP, no conflict record, phase synced.
+      expect((await store.getConflictsForBoard("wb-1")).length).toBe(0);
+      expect(await store.getPendingOperations("wb-1")).toHaveLength(0);
+      expect(engine.phase).toBe("synced");
+    });
+  });
+
+  describe("seedServerVersion", () => {
+    it("a fresh op picks up the seeded version instead of defaulting to 0", async () => {
+      await init();
+      // Simulate the initial GET /whiteboards/<id>/ reporting the board is
+      // already at version 47 — without this seed, the engine's internal
+      // counter stays 0 and the very first operation would be wrongly
+      // rebased down to version 0 before ever reaching the server.
+      engine.seedServerVersion(47);
+      expect(engine.serverVersion).toBe(47);
+
+      const env = makeEnvelope(47);
+      await engine.submit(env);
+      const [op] = await store.getPendingOperations("wb-1");
+      expect(op.base_version).toBe(47);
+    });
+
+    it("never regresses an already-higher known version", async () => {
+      await init();
+      engine.seedServerVersion(47);
+      engine.seedServerVersion(10); // stale/late seed must not win
+      expect(engine.serverVersion).toBe(47);
     });
   });
 });

@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING
 
 from apps.whiteboard import selectors
 from apps.whiteboard.enums import WhiteboardOperationType, WhiteboardStatus
-from apps.whiteboard.errors import WhiteboardReadOnlyError
+from apps.whiteboard.errors import StaleVersionError, WhiteboardReadOnlyError
 from apps.whiteboard.models import WhiteboardOperation
+from apps.whiteboard.restore import RestoreService
 from apps.whiteboard.service import WhiteboardOperationService
 from apps.whiteboard.state_reconstruction import reconstruct_state
 from apps.whiteboard.validator import OperationValidator
@@ -262,6 +263,71 @@ class TransactionRollbackTests(ConcurrencyTestCase):
         self.assertEqual(
             WhiteboardOperation.objects.filter(whiteboard=self.whiteboard).count(),
             0,
+        )
+
+
+class RestoreConcurrencyTests(ConcurrencyTestCase):
+    """Restore submits through the same locked path as any other operation
+    (see restore.RestoreService) -- confirm it actually gets the same
+    concurrency safety net, not just that the code looks like it should."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.alice = make_user("alice@example.com")
+        self.bobby = make_user("bobby@example.com")
+        self.partnership = make_active_partnership(self.alice, self.bobby)
+        self.whiteboard = selectors.whiteboard_for_partnership(self.partnership)
+        # Seed some history so there's something to restore to.
+        svc = WhiteboardOperationService(validator=OperationValidator())
+        svc.submit(self.whiteboard, self.alice, _make_stroke_op(base_version=0))
+        svc.submit(self.whiteboard, self.bobby, _make_stroke_op(base_version=1))
+        self.whiteboard.refresh_from_db()
+
+    def test_restore_races_normal_op_exactly_one_wins(self) -> None:
+        """A restore and an ordinary create_stroke, both submitted at the
+        board's current version concurrently, must not both succeed."""
+        restore_svc = RestoreService()
+        op_svc = WhiteboardOperationService(validator=OperationValidator())
+        current = self.whiteboard.version
+        results: list[str] = []
+        errors: list[Exception] = []
+
+        def do_restore() -> None:
+            try:
+                restore_svc.restore(
+                    self.whiteboard,
+                    self.alice,
+                    operation_id=str(uuid.uuid4()),
+                    base_version=current,
+                    target_sequence=0,
+                )
+                results.append("restore")
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        def do_stroke() -> None:
+            try:
+                op_svc.submit(self.whiteboard, self.bobby, _make_stroke_op(base_version=current))
+                results.append("stroke")
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f1 = executor.submit(do_restore)
+            f2 = executor.submit(do_stroke)
+            f1.result()
+            f2.result()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], StaleVersionError)
+
+        self.whiteboard.refresh_from_db()
+        self.assertEqual(self.whiteboard.version, current + 1)
+        # No matter which one won, no rows were lost or corrupted.
+        self.assertEqual(
+            WhiteboardOperation.objects.filter(whiteboard=self.whiteboard).count(),
+            current + 1,
         )
 
 

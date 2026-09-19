@@ -50,7 +50,9 @@ Row shape (`LocalOperation`): identity, `base_version`, `client_sequence`,
 status, `retry_count`, `last_error`, `last_attempt_at`, server ack fields, timestamps.
 
 Status lifecycle: `PENDING → SUBMITTING → CONFIRMED` (compacted), or
-`PENDING → CONFLICT` (quarantined) / `FAILED` (retry exhausted). See `sync-engine.md`.
+`PENDING → FAILED` (retry exhausted or permanent rejection). `CONFLICT` /
+`REJECTED` are legacy values kept only so rows written by older builds can be
+healed at reopen — new code never produces them. See `sync-engine.md`.
 
 ### `meta` (keyPath `key`)
 
@@ -60,9 +62,13 @@ Small key/value globals.
 |-----|-------|
 | `client_id` | persistent installation UUID (see `client-id.ts`) |
 
-### `conflicts` (keyPath `operation_id`)
+### `conflicts` (keyPath `operation_id`) — legacy, healing-only
 
-Quarantined operations that could not be reconciled automatically.
+Quarantined operations written by older builds. New code never writes here: the
+engine no longer quarantines, and `requeueConflicts()` re-enters any existing
+rows into the pending queue on reopen so the current always-anchored flush
+resolves them (duplicates confirm; genuinely rejected ops surface as a save
+error). In normal operation this store is empty.
 
 | index | keyPath | purpose |
 |-------|---------|---------|
@@ -70,9 +76,10 @@ Quarantined operations that could not be reconciled automatically.
 | `by_owner` | `owner_key` | owner partition |
 
 Row shape (`LocalConflictRecord`): embeds the full `LocalOperation`, plus
-`reason`, `detected_at`, `status`, `updated_at`. Resolving a conflict returns the
-embedded op to `PENDING` (fresh `retry_count`) for re-submission; discarding
-deletes the record.
+`reason`, `detected_at`, `status`, `updated_at`. Requeuing a conflict (via
+`requeueConflicts`/`resolveAllConflicts`) returns the embedded op to `PENDING`
+(fresh `retry_count`) for re-submission and deletes the record; discarding
+deletes it outright (`discardConflict`).
 
 ## Partitioning (multi-account safety)
 

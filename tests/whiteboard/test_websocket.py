@@ -14,6 +14,7 @@ with correctly). The tiny amount of synchronous ORM fixture setup is wrapped in
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -24,7 +25,8 @@ from channels.auth import AuthMiddlewareStack
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.conf import settings
-from django.test import Client
+from django.test import Client, override_settings
+from django.urls import reverse
 
 from apps.whiteboard import realtime as rt
 from apps.whiteboard import routing
@@ -86,7 +88,9 @@ async def _connect(user: Any, public_id: Any) -> WebsocketCommunicator:
     return comm
 
 
-async def _connect_headers(public_id: Any, headers: list[tuple[bytes, bytes]]) -> WebsocketCommunicator:
+async def _connect_headers(
+    public_id: Any, headers: list[tuple[bytes, bytes]]
+) -> WebsocketCommunicator:
     comm = WebsocketCommunicator(APPLICATION, f"/ws/whiteboards/{public_id}/", headers=headers)
     connected, _ = await comm.connect()
     assert connected is True
@@ -159,7 +163,9 @@ async def test_connect_ready_carries_identity_and_version() -> None:
 @pytest.mark.django_db(transaction=True)
 async def test_connect_rejects_anonymous() -> None:
     w = await _make_world()
-    comm = await _connect_headers(w.partnership.public_id, [(b"origin", ORIGIN), (b"host", b"localhost")])
+    comm = await _connect_headers(
+        w.partnership.public_id, [(b"origin", ORIGIN), (b"host", b"localhost")]
+    )
     err = await _ready(comm)
     assert err["type"] == rt.S_CONNECTION_ERROR
     assert err["code"] == rt.E_AUTH_REQUIRED
@@ -184,6 +190,35 @@ async def test_connect_rejects_unknown_whiteboard() -> None:
     assert err["type"] == rt.S_CONNECTION_ERROR
     assert err["code"] == rt.E_WHITEBOARD_NOT_FOUND
     await comm.disconnect()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_connect_wildcard_origin_allows_any_origin() -> None:
+    w = await _make_world()
+    headers = await _authenticated_headers(w.alice)
+    comm = WebsocketCommunicator(
+        APPLICATION,
+        f"/ws/whiteboards/{w.partnership.public_id}/",
+        headers=[(b"origin", b"http://192.168.10.5:8000"), *(h for h in headers if h[0] != b"origin")],
+    )
+    with override_settings(WEBSOCKET_ALLOWED_ORIGINS=["*"]):
+        connected, _ = await comm.connect()
+    assert connected is True
+    await comm.disconnect()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_connect_strict_origin_rejects_unlisted() -> None:
+    w = await _make_world()
+    headers = await _authenticated_headers(w.alice)
+    comm = WebsocketCommunicator(
+        APPLICATION,
+        f"/ws/whiteboards/{w.partnership.public_id}/",
+        headers=[(b"origin", ORIGIN), *(h for h in headers if h[0] != b"origin")],
+    )
+    with override_settings(WEBSOCKET_ALLOWED_ORIGINS=["https://example.com"]):
+        connected, _ = await comm.connect()
+    assert connected is False
 
 
 # --------------------------------------------------------------------------- operations
@@ -212,6 +247,91 @@ async def test_submit_broadcasts_committed_to_all() -> None:
 
     await a.disconnect()
     await b.disconnect()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_http_submit_broadcasts_committed_to_live_peer() -> None:
+    """An operation accepted over HTTP reaches a partner on a live WebSocket.
+
+    Regression test for the real-time gap where the *author's* WebSocket was
+    not live: its writes silently fell back to HTTP (``pushHttp``) and HTTP
+    submits never broadcast, so a connected partner didn't see them until a
+    resync. A connected peer must receive the committed operation regardless of
+    the transport the author used.
+    """
+    w = await _make_world()
+    alice = await _connect(w.alice, w.partnership.public_id)
+    await _ready(alice)
+    bob = await _connect(w.bob, w.partnership.public_id)
+    await _ready(bob)
+
+    op_id = str(uuid4())
+    resp = await sync_to_async(_http_post_op)(w, op_id)
+    assert resp.status_code == 200
+
+    # The live partner sees the commit over the broadcast, not a resync.
+    msg = await _ready(alice)
+    assert msg["type"] == rt.S_OPERATION_COMMITTED
+    assert msg["operation_id"] == op_id
+    assert msg["version"] == 1
+    assert msg["duplicate"] is False
+    assert msg["actor"]["public_id"] == str(w.bob.public_id)
+    assert msg["operation"]["operation_type"] == "create_stroke"
+
+    # The HTTP author's own (still-open) socket also receives the broadcast —
+    # its client deduplicates by operation_id, so this must never re-apply.
+    self_msg = await _ready(bob)
+    assert self_msg["type"] == rt.S_OPERATION_COMMITTED
+    assert self_msg["operation_id"] == op_id
+
+    await alice.disconnect()
+    await bob.disconnect()
+
+
+def _http_post_op(w: Any, op_id: str) -> Any:
+    """Authenticated HTTP operation submit (sync; runs on a worker thread)."""
+    client = Client()
+    client.force_login(w.bob)
+    return client.post(
+        reverse("whiteboard:api_operation_submit", kwargs={"public_id": w.partnership.public_id}),
+        data=json.dumps(
+            {
+                "operation_id": op_id,
+                "base_version": 0,
+                "operation_type": "create_stroke",
+                "payload": {
+                    "object_id": str(uuid4()),
+                    "points": [{"x": 1, "y": 2}],
+                    "color": "#2563eb",
+                    "width": 4,
+                    "opacity": 1.0,
+                },
+            }
+        ),
+        content_type="application/json",
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_http_submit_duplicate_still_broadcasts_duplicate_flag() -> None:
+    w = await _make_world()
+    alice = await _connect(w.alice, w.partnership.public_id)
+    await _ready(alice)
+
+    op_id = str(uuid4())
+    assert await sync_to_async(_http_post_op)(w, op_id).status_code == 200
+    first = await _ready(alice)
+    assert first["type"] == rt.S_OPERATION_COMMITTED
+    assert first["duplicate"] is False
+
+    # Retrying the same operation id over HTTP broadcasts a duplicate ack.
+    assert await sync_to_async(_http_post_op)(w, op_id).status_code == 200
+    second = await _ready(alice)
+    assert second["operation_id"] == op_id
+    assert second["duplicate"] is True
+    assert second["version"] == 1  # unchanged
+
+    await alice.disconnect()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -282,6 +402,35 @@ async def test_revoked_member_cannot_keep_writing() -> None:
     err = await _ready(a)
     assert err["type"] == rt.S_CONNECTION_ERROR
     assert err["code"] == rt.E_FORBIDDEN
+    await a.disconnect()
+
+
+@pytest.mark.django_db(transaction=True)
+async def test_ended_partnership_disconnects_passive_listener() -> None:
+    """A purely passive connection (never sends a message) must not keep
+    receiving broadcasts once the partnership that authorized it has ended.
+
+    Unlike test_revoked_member_cannot_keep_writing, Bob here never sends
+    anything — the server must push the re-check itself (see
+    apps.whiteboard.realtime_signals.request_reauthorization, invoked from
+    end_partnership via transaction.on_commit), not merely wait for Bob's
+    next outbound message.
+    """
+    from apps.partnerships.services import end_partnership
+
+    w = await _make_world()
+    a = await _connect(w.alice, w.partnership.public_id)
+    await _ready(a)
+    b = await _connect(w.bob, w.partnership.public_id)
+    await _ready(b)
+
+    await sync_to_async(end_partnership)(w.partnership, w.alice)
+
+    # Bob never sends anything, yet must be pushed a FORBIDDEN + closed.
+    err = await _ready(b)
+    assert err["type"] == rt.S_CONNECTION_ERROR
+    assert err["code"] == rt.E_FORBIDDEN
+    await b.disconnect()
     await a.disconnect()
 
 

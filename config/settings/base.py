@@ -79,13 +79,12 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "django.template.context_processors.csp",
-                "apps.core.context_processors.theme",
             ],
         },
     },
 ]
 
-DATABASES = {
+DATABASES: dict[str, dict[str, Any]] = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.environ.get("POSTGRES_DB", "candle"),
@@ -118,15 +117,29 @@ CHANNEL_LAYERS = {
 # Development injects sensible localhost defaults; production requires this to
 # be set explicitly (see production.py).
 WEBSOCKET_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("WEBSOCKET_ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
+    o.strip() for o in os.environ.get("WEBSOCKET_ALLOWED_ORIGINS", "").split(",") if o.strip()
 ]
 
+# socket_connect_timeout/socket_timeout bound how long a request can hang if
+# Redis is unreachable — otherwise the underlying redis-py client falls back
+# to the OS's own TCP timeout (discovered as a real issue on the equivalent
+# PostgreSQL connection while testing /health/ready/'s failure path; the same
+# principle applies here for consistency).
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": REDIS_URL,
+        # Django's RedisCache passes OPTIONS (besides serializer/pool_class/
+        # parser_class) straight through to redis-py's
+        # ConnectionPool.from_url(), so these are top-level connection kwargs
+        # — NOT nested under a CONNECTION_POOL_KWARGS key (that's the
+        # third-party django-redis package's different OPTIONS shape).
+        # Verified against the installed django/core/cache/backends/redis.py
+        # source directly, not assumed.
+        "OPTIONS": {
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        },
     },
 }
 
@@ -236,6 +249,10 @@ MAILERS = {
     },
 }
 
+# Structured JSON logs (one object per line) for production log aggregation;
+# human-readable text otherwise. See .env.example.
+LOG_JSON = os.environ.get("LOG_JSON", "False").lower() in ("true", "1", "yes")
+
 LOGGING: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -244,11 +261,14 @@ LOGGING: dict[str, Any] = {
             "format": "[{asctime}] {levelname} {name} {message}",
             "style": "{",
         },
+        "json": {
+            "()": "apps.core.logging.JSONFormatter",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "json" if LOG_JSON else "verbose",
         },
     },
     "root": {

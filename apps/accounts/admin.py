@@ -52,7 +52,7 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "display_name", "locale", "updated_at")
+    list_display = ("user", "display_name", "pronouns", "accent_color", "locale", "updated_at")
     search_fields = ("user__email", "display_name")
     autocomplete_fields = ("user",)
     readonly_fields = ("created_at", "updated_at")

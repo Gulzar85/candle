@@ -115,7 +115,7 @@ payload when rate limited.
 | Max payload per operation | 100 KB | `WHITEBOARD_MAX_OPERATION_PAYLOAD_BYTES` |
 | Max points per stroke | 4,000 | `WHITEBOARD_MAX_STROKE_POINTS` |
 | Max batch size | 50 | `WHITEBOARD_MAX_BATCH_OPERATIONS` |
-| Max request body | 250 KB | `WHITEBOARD_MAX_REQUEST_BODY_BYTES` |
+| Max request body (any endpoint) | 5 MB | `MAX_REQUEST_BODY_BYTES` (global, enforced by `apps.core.middleware.RequestSizeGuard`, not whiteboard-specific) |
 
 ---
 
@@ -176,6 +176,119 @@ Load operations in sequence order (for incremental sync).
   "count": 1
 }
 ```
+
+---
+
+## POST /api/whiteboards/\<public_id\>/restore/
+
+*(Phase 9.)* Restore the board to an earlier point in its own history —
+creates a new, forward-moving `restore_version` operation. Never deletes or
+rewrites history. See `docs/architecture/whiteboard-history.md`.
+
+### Request
+
+```json
+{
+  "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "base_version": 12,
+  "target_sequence": 7
+}
+```
+
+### Response (200 OK)
+
+Same ack shape as `POST .../operations/` — `{"acks": [...], "version": N,
+"applied": N}`.
+
+### Errors
+
+`STALE_VERSION` if `base_version` no longer matches the current version
+(exactly the same server-side base-version validation as any other operation submission).
+`INVALID_OPERATION` (400) if `target_sequence` is negative or beyond the
+board's current version. `WHITEBOARD_READ_ONLY` (409) on an archived board.
+Rate-limited (10/min, distinct from ordinary operation submission's
+60/min).
+
+Every other client connected to this board is notified via a lightweight
+WebSocket broadcast (`target_sequence` + metadata only, never the full
+snapshot) and is expected to refetch full state — see
+`docs/architecture/websocket-protocol.md`.
+
+---
+
+## GET /api/whiteboards/\<public_id\>/history/
+
+*(Phase 9.)* Load humanized history entries, newest-first.
+
+### Query parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `before_sequence` | (current version) | Page backward from just before this sequence |
+| `limit` | 50 | Max entries to return (max 200) |
+
+### Response (200 OK)
+
+```json
+{
+  "entries": [
+    {
+      "sequence": 15,
+      "operation_type": "create_stroke",
+      "text": "You added a drawing.",
+      "count": 1,
+      "created_at": "2026-09-04T12:00:00Z",
+      "can_restore": false
+    }
+  ],
+  "version": 15,
+  "count": 1
+}
+```
+
+`can_restore` is `false` only for the entry whose `sequence` equals the
+board's current version — nothing to restore, already current. `sequence`
+is the value to pass as `target_sequence` to the restore endpoint above.
+Never exposes raw operation payloads, actor ids, or internal jargon — see
+`docs/architecture/whiteboard-history.md`.
+
+---
+
+## POST /api/whiteboards/\<public_id\>/import/
+
+*(Phase 9.)* Import a previously-exported JSON board.
+
+### Request
+
+```json
+{
+  "schema_version": 1,
+  "objects": [
+    {"object_id": "s1", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}], "color": "#2563eb", "width": 3, "opacity": 1}
+  ],
+  "clear_first": false
+}
+```
+
+Object ids are always regenerated server-side — client-supplied ids are
+never trusted or reused. Every object is validated exactly like a live
+`create_stroke` payload; the whole import is rejected atomically if any
+single object fails validation. `clear_first: true` composes the existing
+`clear_canvas` operation before importing, for a full replace instead of
+adding on top.
+
+### Response (200 OK)
+
+```json
+{"imported": 1, "version": 16}
+```
+
+### Errors
+
+`INVALID_PAYLOAD` (400) for a missing/unsupported `schema_version`, a
+malformed `objects` array, or any single invalid object. `OPERATION_TOO_LARGE`
+(413) beyond `MAX_IMPORT_OBJECTS` (2,000). `WHITEBOARD_READ_ONLY` (409) on
+an archived board. Rate-limited (5/hour — heavy, infrequent by nature).
 
 ---
 

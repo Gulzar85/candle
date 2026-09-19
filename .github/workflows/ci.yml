@@ -1,0 +1,113 @@
+name: CI
+
+# Authored 2026-09-04. This workflow has NEVER run against a real GitHub
+# Actions runner — this repository has no configured git remote at the time
+# of writing (see docs/production-readiness-report.md). The steps below are
+# real, correct commands for this project's actual toolchain (verified
+# against pyproject.toml, package.json, and .pre-commit-config.yaml, not
+# invented), but "authored and internally consistent" is not the same claim
+# as "has been observed to pass" — that first real run is the thing to watch
+# closely, not assume.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: candle
+          POSTGRES_USER: candle
+          POSTGRES_PASSWORD: candle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U candle"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # config.settings.test (the pytest default, set in pyproject.toml)
+      # doesn't need Redis — it inherits development.py's InMemoryChannelLayer
+      # / LocMemCache — only PostgreSQL connectivity is required here.
+      POSTGRES_DB: candle
+      POSTGRES_USER: candle
+      POSTGRES_PASSWORD: candle
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: mypy
+        # Known, tracked, pre-existing typing debt exists (see
+        # docs/architecture/phase-8-production-audit.md and the Phase 0/1
+        # audit trail) — mostly Django-stub imprecision around
+        # AbstractBaseUser subclassing and User|AnonymousUser unions, not
+        # functional bugs. Informational for now rather than a hard gate,
+        # so it doesn't block merges on debt this workflow didn't introduce
+        # and wasn't scoped to clean up. Revisit once that debt is paid down.
+        run: mypy .
+        continue-on-error: true
+
+      - name: Django system checks
+        run: python manage.py check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+
+      - name: Migration drift check
+        run: python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+
+      - name: pytest
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Production build
+        run: npx vite build

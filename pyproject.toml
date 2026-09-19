@@ -28,6 +28,7 @@ dev = [
     "pytest>=9,<10",
     "pytest-django>=4.11,<5",
     "pytest-asyncio>=1.0,<2",
+    "pre-commit>=4.0,<5",
 ]
 
 [tool.ruff]
@@ -51,6 +52,12 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["config", "apps"]
+
+[tool.ruff.lint.per-file-ignores]
+# Django's standard split-settings pattern (`from .base import *`) is a
+# wildcard import by design; F403/F405 would otherwise flag every setting
+# each environment module inherits or overrides.
+"config/settings/*.py" = ["F403", "F405"]
 
 [tool.ruff.format]
 quote-style = "double"

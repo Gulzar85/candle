@@ -1,11 +1,37 @@
 {% load form_helpers %}
-<form method="post" action="{% url 'accounts:profile' %}" novalidate
+<form id="profile-form" method="post" action="{% url 'accounts:profile' %}" novalidate
       hx-post="{% url 'accounts:profile' %}" hx-target="#profile-form" hx-swap="outerHTML">
   {% csrf_token %}
   <div class="space-y-4">
-    {% include "accounts/_field.html" with field=form.display_name %}
-    {% include "accounts/_field.html" with field=form.timezone %}
-    {% include "accounts/_field.html" with field=form.locale %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {% include "accounts/_field.html" with field=form.display_name %}
+      {% include "accounts/_field.html" with field=form.pronouns %}
+    </div>
+    {% include "accounts/_field.html" with field=form.bio %}
+
+    {# Identity color — rendered as swatches instead of the generic field partial. #}
+    <div class="space-y-1.5">
+      <label class="block text-sm font-medium mb-0.5">{{ form.accent_color.label }}</label>
+      <div class="flex flex-wrap items-center gap-2.5" role="radiogroup" aria-label="Identity color">
+        {% for radio in form.accent_color %}
+        <label class="relative cursor-pointer [&_input]:sr-only [&_input]:pointer-events-none">
+          {{ radio.tag }}
+          <span class="block w-8 h-8 rounded-full transition-shadow"
+                style="background-color: {{ radio.data.value }}; {% if radio.data.selected %}box-shadow: 0 0 0 2px var(--color-card), 0 0 0 4px {{ radio.data.value }};{% endif %}"></span>
+          <span class="sr-only">{{ radio.choice_label }}</span>
+          {% if radio.data.selected %}
+          <i data-lucide="check" class="w-4 h-4 text-white absolute inset-0 m-auto pointer-events-none" aria-hidden="true"></i>
+          {% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <p class="text-xs text-muted-foreground">Shown on your avatar and to your partner.</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border">
+      {% include "accounts/_field.html" with field=form.timezone %}
+      {% include "accounts/_field.html" with field=form.locale %}
+    </div>
   </div>
   {% if form.non_field_errors %}
   <div class="mt-3 space-y-1">
@@ -17,8 +43,8 @@
   </div>
   {% endif %}
   <div class="mt-6 flex items-center justify-end">
-    <button type="submit"
-            class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+    <button type="submit" class="btn-primary">
+      <i data-lucide="check" class="w-4 h-4" aria-hidden="true"></i>
       Save changes
     </button>
   </div>

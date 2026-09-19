@@ -4,7 +4,10 @@ from . import views
 from .api import (
     OperationListView,
     OperationSubmitView,
+    WhiteboardHistoryView,
+    WhiteboardImportView,
     WhiteboardRenameView,
+    WhiteboardRestoreView,
     WhiteboardStateView,
 )
 
@@ -46,5 +49,23 @@ urlpatterns = [
         "api/whiteboards/<uuid:public_id>/operations/list/",
         OperationListView.as_view(),
         name="api_operation_list",
+    ),
+    # API: restore to an earlier version (creates a new restore_version op).
+    path(
+        "api/whiteboards/<uuid:public_id>/restore/",
+        WhiteboardRestoreView.as_view(),
+        name="api_whiteboard_restore",
+    ),
+    # API: human-readable history (newest-first, paginated).
+    path(
+        "api/whiteboards/<uuid:public_id>/history/",
+        WhiteboardHistoryView.as_view(),
+        name="api_whiteboard_history",
+    ),
+    # API: import a previously-exported JSON board.
+    path(
+        "api/whiteboards/<uuid:public_id>/import/",
+        WhiteboardImportView.as_view(),
+        name="api_whiteboard_import",
     ),
 ]

@@ -61,6 +61,53 @@ describe("commit / undo / redo", () => {
   });
 });
 
+describe("move / resize ops", () => {
+  it("move commits the new stroke and inverts back to the original", () => {
+    let board = createBoard();
+    const a = stroke("a");
+    board = commit(board, add(a));
+    const moved: Stroke = { ...a, points: [{ x: 5, y: 5 }, { x: 6, y: 6 }] };
+    board = commit(board, { type: "move", from: a, to: moved });
+    expect(strokeById(board, "a")?.points).toEqual(moved.points);
+
+    board = undo(board);
+    expect(strokeById(board, "a")?.points).toEqual(a.points);
+
+    board = redo(board);
+    expect(strokeById(board, "a")?.points).toEqual(moved.points);
+  });
+
+  it("resize commits the new stroke and inverts back via reciprocal scale", () => {
+    let board = createBoard();
+    const a = stroke("a");
+    board = commit(board, add(a));
+    const resized: Stroke = { ...a, points: [{ x: 0, y: 0 }, { x: 2, y: 2 }] };
+    board = commit(board, {
+      type: "resize",
+      from: a,
+      to: resized,
+      anchor: { x: 0, y: 0 },
+      scaleX: 2,
+      scaleY: 2,
+    });
+    expect(strokeById(board, "a")?.points).toEqual(resized.points);
+
+    board = undo(board);
+    expect(strokeById(board, "a")?.points).toEqual(a.points);
+  });
+
+  it("move/resize do not affect other strokes", () => {
+    let board = createBoard();
+    const a = stroke("a");
+    const b = stroke("b");
+    board = commit(board, add(a));
+    board = commit(board, add(b));
+    const moved: Stroke = { ...a, points: [{ x: 9, y: 9 }, { x: 10, y: 10 }] };
+    board = commit(board, { type: "move", from: a, to: moved });
+    expect(strokeById(board, "b")?.points).toEqual(b.points);
+  });
+});
+
 describe("hasStroke / strokeById", () => {
   it("queries by id", () => {
     const board = commit(createBoard(), add(stroke("a")));

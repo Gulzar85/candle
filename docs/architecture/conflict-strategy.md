@@ -84,6 +84,9 @@ idempotent by `operation_id`, a client that has already applied the same op
 
 Remote apply is also *idempotent over the board*: a `delete_object` whose
 subject no longer exists and a `clear_canvas` on an empty board are no-ops.
+Phase 9's `move_object`/`resize_object` follow the same rule — a target
+object that no longer exists locally is a no-op, matching `delete_object`'s
+existing convention, not an error.
 
 ---
 

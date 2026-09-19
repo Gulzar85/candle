@@ -81,6 +81,14 @@ DELETE_OBJECT (seq=2, version=2)  // undo expressed as delete
 
 Both preserve history. The choice depends on Phase 5's collaboration model.
 
+**Still unresolved as of Phase 9** — undo/redo remains 100% client-side
+only; this question was not revisited. Phase 9's `restore_version` operation
+(`docs/architecture/whiteboard-history.md`) is a **different** feature —
+it reverts the whole board to an earlier point in its history on explicit
+user request, not "undo my last local action" server-side — and doesn't
+resolve this question either way. A collaborative undo/redo model, if ever
+built, would still need to choose between Approach A and B above.
+
 ## Clear Canvas
 
 Clear is a logical operation, not a physical delete of rows:

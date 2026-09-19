@@ -21,7 +21,7 @@ WhiteboardEngine ──submit(op)──▶ SyncEngine ──store──▶ Index
                                    │   runSync
                                    │        ├─ read pending ops
                                    │        ├─ read server version (controller if present)
-                                   │        └─ pushPending: reconcile + ordered submit
+                                   │        └─ pushPending: anchored ordered submit
                                    ▼
                               RealTimeController / WhiteboardRepository (server)
 ```
@@ -43,9 +43,9 @@ IndexedDB in Vitest).
 | `PENDING` | Durable on device; awaiting submission. |
 | `SUBMITTING` | An attempt is in flight; a crash here is recoverable. |
 | `CONFIRMED` | Server acknowledged; eligible for compaction. |
-| `REJECTED` | Server permanently rejected the payload. |
-| `CONFLICT` | Could not be reconciled automatically; quarantined. |
-| `FAILED` | Exceeded retry budget; needs user attention (never dropped). |
+| `REJECTED` | Legacy — no longer produced; retained only for old rows. |
+| `CONFLICT` | Legacy — no longer produced; retained only so old rows can be healed at reopen. |
+| `FAILED` | Server permanently rejected, or retry budget exhausted; surfaced as a save error (never dropped). |
 
 Graph:
 
@@ -54,8 +54,9 @@ PENDING ──▶ SUBMITTING ──▶ CONFIRMED ──▶ (compacted/removed)
     ▲          │
     │          ├─ error/network ─▶ PENDING  (retry w/ backoff, up to MAX_RETRIES)
     │          │                        └── exhausting → FAILED
-    │          └─ permanent reject ─▶ CONFLICT (quarantined)
-    └─ recoverInterrupted() on startup
+    │          ├─ STALE_VERSION ─▶ PENDING  (re-anchor, reschedule ~50ms)
+    │          └─ permanent reject ─▶ FAILED (save error; never quarantined)
+    └─ recoverInterrupted() on startup; requeueConflicts() heals legacy rows
 ```
 
 ## Durability point
@@ -72,13 +73,17 @@ falsely told the change is saved.
 2. Read the current server version (preferred source: a `setServerVersionGetter`
    wired from the realtime controller's confirmed version; fallback: the engine's
    cached `_serverVersion`).
-3. Classify each op via `decideReconciliation` (see conflict matrix):
-   - submit / rebase → queue for submission (rebase bumps `base_version`).
-   - reject → `quarantineConflict` (conflicts store + op marked `CONFLICT`).
+3. Anchor the pass to the newest known version. There is **no classification
+   step** — every op is submitted against this anchor, which each ack advances,
+   so the queue never replays against a stale recorded base. (A partner's
+   mid-flight commit can still advance the board between the anchor and a given
+   submit; that is exactly what the server's `STALE_VERSION` reply catches, and
+   the engine re-anchors and re-runs the pass.)
 4. Submit in `client_sequence` order, one op per request (keeps base-version
-   validation and idempotency exact). Confirmed ops are compacted out once acked.
-5. After the pass, recompute phase: `synced` (queue empty, no conflicts),
-   `pending` (still queued), or `conflict` (any quarantined).
+   validation and idempotency exact). Confirmed ops are compacted out once acked,
+   and each ack advances the pass anchor for the next op.
+5. After the pass, recompute phase: `synced` (queue empty), `pending` (still
+   queued), or `error` (any permanent failure). There is no `conflict` phase.
 
 Sync passes are **debounced** through `_scheduleSync` so bursts coalesce into a
 single pass.
@@ -89,13 +94,15 @@ single pass.
 |---------------|---------------|
 | network / status `0` / `5xx` | Backoff `1s·2^retry_count` capped at 30s + jitter; `retry_count` up to `MAX_RETRIES = 8`; then `FAILED`. |
 | `429` rate-limited | Honor `retry_after` (default 10s). |
-| `STALE_VERSION` | Reconcile again using the server-reported `current_version`; re-run the pass after 50ms. |
-| `FORBIDDEN` / `WHITEBOARD_ARCHIVED` | Permanent: quarantine, notify via `hooks.onConflict`. |
-| other 4xx | Permanent: quarantine. |
+| `STALE_VERSION` | Re-anchor to the server-reported `current_version`; re-run the pass after 50ms. |
+| `FORBIDDEN` / `WHITEBOARD_ARCHIVED` | Permanent: mark `FAILED` (save error in the status bar). |
+| other 4xx | Permanent: mark `FAILED`. |
 
-No path silently deletes a pending operation. The three terminal out-comes are
-`CONFIRMED` (compacted), `CONFLICT` (quarantined), or `FAILED` (preserved for
-review).
+No path silently deletes a pending operation, and no path parks one for manual
+review: the two terminal outcomes are `CONFIRMED` (compacted) or `FAILED`
+(preserved, surfaced as a save error). `requeueConflicts()` /
+`resolveAllConflicts()` exist only to heal legacy quarantined rows from older
+builds back into the pending queue.
 
 ## Crash recovery
 
@@ -124,7 +131,8 @@ On reconnect the engine automatically pushes whatever accumulated offline.
 ```
 
 `SyncManager` folds this into its own status model (`saveStatus: saved | pending
-| saving | syncing | error | offline`) and the status bar / conflict panel react.
+| saving | syncing | error | offline`) and the status bar reacts. `conflictCount`
+is retained as legacy-healing bookkeeping and is 0 in normal operation.
 
 ## Public facade (`SyncManager`)
 
@@ -140,8 +148,9 @@ On reconnect the engine automatically pushes whatever accumulated offline.
 ## Testing
 
 - `sync-engine.test.ts` — in-memory fake store; covers submit durability, ordered
-  push, partial failure (one acked, one stays pending), conflict quarantine,
-  bounded backoff → `FAILED`, idempotent-confirm no-op, and STALE re-reconciliation.
+  push, partial failure (one acked, one stays pending), stale destructive ops
+  re-anchoring and submitting (no quarantine), permanent rejection → `FAILED`,
+  bounded backoff → `FAILED`, idempotent-confirm no-op, STALE re-sync, and
+  legacy-conflict healing via `requeueConflicts`/`resolveAllConflicts`.
 - `sync.test.ts` — HTTP-only fallback path (unscoped `SyncManager`).
-- `conflict-resolver.test.ts`, `network-monitor.test.ts` — pure decision +
-  connectivity units.
+- `network-monitor.test.ts` — connectivity unit.

@@ -14,7 +14,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render, resolve_url
-from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts.models import User
@@ -57,17 +56,6 @@ def _current_user(request: HttpRequest) -> User:
 
 def _rate_limited(request: HttpRequest) -> HttpResponse:
     return render(request, "accounts/rate_limited.html", status=429)
-
-
-def _safe_redirect(request: HttpRequest, fallback: str) -> HttpResponse:
-    """Redirect to a safe next URL, else fallback. Never an open redirect."""
-    raw_next = request.POST.get("next") or request.GET.get("next")
-    next_url: str | None = raw_next if isinstance(raw_next, str) else None
-    allowed = bool(
-        next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()})
-    )
-    target = next_url or fallback if allowed else fallback
-    return redirect(resolve_url(target))
 
 
 def _invitation_detail_url(invitation: PartnershipInvitation) -> str:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import uuid
 
+from django.test import TestCase
 from django.urls import reverse
 
 from apps.partnerships.enums import PartnershipMemberStatus, PartnershipStatus
@@ -80,6 +81,36 @@ def _make_clear_op(*, base_version: int = 0) -> dict:
         "operation_type": WhiteboardOperationType.CLEAR_CANVAS,
         "base_version": base_version,
         "payload": {},
+    }
+
+
+def _make_move_op(*, object_id: str, dx: float = 1, dy: float = 1, base_version: int = 0) -> dict:
+    return {
+        "operation_id": str(uuid.uuid4()),
+        "operation_type": WhiteboardOperationType.MOVE_OBJECT,
+        "base_version": base_version,
+        "payload": {"object_id": object_id, "dx": dx, "dy": dy},
+    }
+
+
+def _make_resize_op(
+    *,
+    object_id: str,
+    anchor: dict | None = None,
+    scale_x: float = 2,
+    scale_y: float = 2,
+    base_version: int = 0,
+) -> dict:
+    return {
+        "operation_id": str(uuid.uuid4()),
+        "operation_type": WhiteboardOperationType.RESIZE_OBJECT,
+        "base_version": base_version,
+        "payload": {
+            "object_id": object_id,
+            "anchor": anchor or {"x": 0, "y": 0},
+            "scale_x": scale_x,
+            "scale_y": scale_y,
+        },
     }
 
 
@@ -428,6 +459,243 @@ class InvalidPayloadTests(WhiteboardTestCase):
             content_type="application/json",
         )
         self.assertEqual(resp.status_code, 413)
+
+
+class MoveObjectTests(WhiteboardTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.alice = make_user("alice@example.com")
+        self.bobby = make_user("bobby@example.com")
+        self.partnership = make_active_partnership(self.alice, self.bobby)
+        self.client.force_login(self.alice)
+
+    def _create_stroke(self, object_id: str) -> None:
+        resp = self.client.post(
+            _op_url(self.partnership),
+            data=json.dumps(_make_stroke_op(object_id=object_id, base_version=0)),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_move_applied_and_reflected_in_state(self) -> None:
+        self._create_stroke("s1")
+        resp = self.client.post(
+            _op_url(self.partnership),
+            data=json.dumps(_make_move_op(object_id="s1", dx=5, dy=-3, base_version=1)),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        state = self.client.get(_state_url(self.partnership)).json()
+        obj = next(o for o in state["objects"] if o["object_id"] == "s1")
+        # _make_stroke_op's default first point is (10, 20).
+        self.assertEqual(obj["points"][0], {"x": 15, "y": 17})
+
+    def test_move_missing_object_id_rejected(self) -> None:
+        op = _make_move_op(object_id="s1", base_version=0)
+        del op["payload"]["object_id"]
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_move_non_numeric_delta_rejected(self) -> None:
+        op = _make_move_op(object_id="s1", base_version=0)
+        op["payload"]["dx"] = "not-a-number"
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_move_non_finite_delta_rejected(self) -> None:
+        op = _make_move_op(object_id="s1", base_version=0)
+        op["payload"]["dx"] = float("inf")
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_move_nonexistent_object_still_commits_as_noop(self) -> None:
+        """The op is structurally valid and commits (advancing version) even
+        though the target object doesn't exist server-side — matching
+        delete_object's existing no-op-on-absent convention."""
+        resp = self.client.post(
+            _op_url(self.partnership),
+            data=json.dumps(_make_move_op(object_id="nonexistent", base_version=0)),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+
+
+class ResizeObjectTests(WhiteboardTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.alice = make_user("alice@example.com")
+        self.bobby = make_user("bobby@example.com")
+        self.partnership = make_active_partnership(self.alice, self.bobby)
+        self.client.force_login(self.alice)
+
+    def _create_stroke(self, object_id: str) -> None:
+        op = _make_stroke_op(
+            object_id=object_id,
+            base_version=0,
+            points=[{"x": 0, "y": 0}, {"x": 10, "y": 10}],
+        )
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_resize_applied_and_reflected_in_state(self) -> None:
+        self._create_stroke("s1")
+        resp = self.client.post(
+            _op_url(self.partnership),
+            data=json.dumps(
+                _make_resize_op(
+                    object_id="s1", anchor={"x": 0, "y": 0}, scale_x=2, scale_y=2, base_version=1
+                )
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        state = self.client.get(_state_url(self.partnership)).json()
+        obj = next(o for o in state["objects"] if o["object_id"] == "s1")
+        self.assertEqual(obj["points"][1], {"x": 20, "y": 20})
+        # Resize never scales stroke width.
+        self.assertEqual(obj["width"], 3)
+
+    def test_resize_missing_anchor_rejected(self) -> None:
+        op = _make_resize_op(object_id="s1", base_version=0)
+        del op["payload"]["anchor"]
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_resize_zero_scale_rejected(self) -> None:
+        op = _make_resize_op(object_id="s1", scale_x=0, base_version=0)
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_resize_absurd_scale_rejected(self) -> None:
+        op = _make_resize_op(object_id="s1", scale_x=1_000_000, base_version=0)
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_resize_non_finite_scale_rejected(self) -> None:
+        op = _make_resize_op(object_id="s1", base_version=0)
+        op["payload"]["scale_y"] = float("nan")
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_resize_boundary_scale_accepted(self) -> None:
+        self._create_stroke("s1")
+        op = _make_resize_op(object_id="s1", scale_x=0.001, scale_y=1000, base_version=1)
+        resp = self.client.post(
+            _op_url(self.partnership), data=json.dumps(op), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 200)
+
+
+class RestoreVersionValidatorTests(TestCase):
+    """Structural validation only — RestoreService (which constructs a real
+    restore_version payload server-side) is covered by test_restore.py."""
+
+    def setUp(self) -> None:
+        from apps.whiteboard.validator import OperationValidator
+
+        self.validator = OperationValidator()
+
+    def _op(self, payload: dict) -> dict:
+        return {
+            "operation_id": str(uuid.uuid4()),
+            "operation_type": WhiteboardOperationType.RESTORE_VERSION,
+            "base_version": 0,
+            "payload": payload,
+        }
+
+    def test_valid_restore_payload_accepted(self) -> None:
+        self.validator.validate(
+            self._op(
+                {
+                    "target_sequence": 3,
+                    "objects": [
+                        {
+                            "object_id": "s1",
+                            "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}],
+                            "color": "#000000",
+                            "width": 3,
+                            "opacity": 1,
+                        }
+                    ],
+                }
+            )
+        )  # should not raise
+
+    def test_negative_target_sequence_rejected(self) -> None:
+        from apps.whiteboard.errors import WhiteboardAPIError
+
+        with self.assertRaises(WhiteboardAPIError):
+            self.validator.validate(self._op({"target_sequence": -1, "objects": []}))
+
+    def test_missing_objects_rejected(self) -> None:
+        from apps.whiteboard.errors import WhiteboardAPIError
+
+        with self.assertRaises(WhiteboardAPIError):
+            self.validator.validate(self._op({"target_sequence": 0}))
+
+    def test_malformed_object_in_snapshot_rejected(self) -> None:
+        from apps.whiteboard.errors import WhiteboardAPIError
+
+        with self.assertRaises(WhiteboardAPIError):
+            self.validator.validate(
+                self._op({"target_sequence": 0, "objects": [{"object_id": "s1"}]})
+            )
+
+    def test_oversized_snapshot_rejected(self) -> None:
+        from apps.whiteboard import limits
+        from apps.whiteboard.errors import WhiteboardAPIError
+
+        objects = [
+            {
+                "object_id": f"s{i}",
+                "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}],
+                "color": "#000000",
+                "width": 3,
+                "opacity": 1,
+            }
+            for i in range(limits.MAX_RESTORE_OBJECTS + 1)
+        ]
+        with self.assertRaises(WhiteboardAPIError):
+            self.validator.validate(self._op({"target_sequence": 0, "objects": objects}))
+
+    def test_restore_gets_higher_byte_cap_than_ordinary_ops(self) -> None:
+        """A restore snapshot bigger than MAX_OPERATION_PAYLOAD_BYTES but
+        under MAX_RESTORE_PAYLOAD_BYTES must be accepted."""
+        from apps.whiteboard import limits
+
+        # One object is small; build enough of them to exceed the ordinary
+        # 100KB op cap but stay under the 150KB restore cap.
+        objects = [
+            {
+                "object_id": f"s{i}",
+                "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}, {"x": 2, "y": 2}],
+                "color": "#000000",
+                "width": 3,
+                "opacity": 1,
+            }
+            for i in range(900)
+        ]
+        payload = {"target_sequence": 0, "objects": objects}
+        payload_bytes = len(json.dumps(payload).encode("utf-8"))
+        self.assertGreater(payload_bytes, limits.MAX_OPERATION_PAYLOAD_BYTES)
+        self.assertLess(payload_bytes, limits.MAX_RESTORE_PAYLOAD_BYTES)
+        self.validator.validate(self._op(payload))  # should not raise
 
 
 class LoadStateTests(WhiteboardTestCase):

@@ -8,6 +8,8 @@ unverified-account gate on login, and focused cache-based rate limiting.
 
 from __future__ import annotations
 
+import logging
+
 from django.contrib import messages
 from django.contrib.auth import get_user_model, update_session_auth_hash
 from django.contrib.auth import logout as auth_logout
@@ -45,6 +47,11 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.http import require_http_methods
 
+from apps.partnerships.enums import PartnershipStatus
+from apps.partnerships.policies import safe_display_name
+from apps.partnerships.selectors import get_active_partnership, get_partner
+from apps.whiteboard.selectors import whiteboard_for_partnership
+
 from . import ratelimit
 from .forms import (
     AvatarForm,
@@ -58,15 +65,13 @@ from .forms import (
 from .models import EmailVerificationToken, User
 from .services import send_email_change_confirmation, send_verification_email
 
-from apps.partnerships.enums import PartnershipStatus
-from apps.partnerships.policies import safe_display_name
-from apps.partnerships.selectors import get_active_partnership, get_partner
-from apps.whiteboard.selectors import whiteboard_for_partnership
+logger = logging.getLogger("apps.accounts")
 
 RATE_LIMITS = {
     "login": {"limit": 6, "window": 300, "cooldown": 300},
     "register": {"limit": 5, "window": 3600, "cooldown": 900},
     "password_reset": {"limit": 3, "window": 900, "cooldown": 900},
+    "password_reset_confirm": {"limit": 6, "window": 900, "cooldown": 900},
     "resend": {"limit": 3, "window": 900, "cooldown": 600},
 }
 
@@ -99,6 +104,7 @@ def register(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             user = form.save()
             send_verification_email(user)
+            logger.info("user.registered ip=%s user_id=%s", client_ip(request), user.pk)
             return render(
                 request,
                 "accounts/verify_sent.html",
@@ -154,6 +160,7 @@ def verify_email(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
         user.email_pending = ""
         user.email_verified = True
         user.save(update_fields=["email", "email_pending", "email_verified", "updated_at"])
+        logger.info("email.change_confirmed user_id=%s", user.pk)
         return render(
             request,
             "accounts/email_change_done.html",
@@ -162,6 +169,7 @@ def verify_email(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
 
     user.email_verified = True
     user.save(update_fields=["email_verified", "updated_at"])
+    logger.info("email.verified user_id=%s", user.pk)
     messages.success(request, "Your email address is verified. You can now sign in.")
     return redirect("accounts:login")
 
@@ -194,14 +202,26 @@ class LoginView(DjangoLoginView):
                 self.request,
                 "Please verify your email address. We sent you a new link.",
             )
+            logger.info(
+                "login.blocked_unverified ip=%s user_id=%s", client_ip(self.request), user.pk
+            )
             return self.form_invalid(form)
         ratelimit.reset("login", self._attempt_key())
+        logger.info("login.success ip=%s user_id=%s", client_ip(self.request), user.pk)
         response = super().form_valid(form)
         if form.cleaned_data.get("remember"):
             self.request.session.set_expiry(1209600)  # 2 weeks
         else:
             self.request.session.set_expiry(0)  # browser-session cookie
         return response
+
+    def form_invalid(self, form: CandleLoginForm) -> HttpResponse:
+        logger.info(
+            "login.failed ip=%s email=%s",
+            client_ip(self.request),
+            self.request.POST.get("username", "").lower(),
+        )
+        return super().form_invalid(form)
 
 
 class LogoutView(DjangoLogoutView):
@@ -218,6 +238,10 @@ class _RateLimitedPasswordResetView(DjangoPasswordResetView):
         )
         if not result.allowed:
             return _rate_limited(request)
+        # Logged unconditionally, before Django's form decides whether the
+        # address matches an account — the response stays enumeration-generic
+        # either way; this is server-side-only visibility into reset activity.
+        logger.info("password_reset.requested ip=%s email=%s", client_ip(request), email.lower())
         return super().post(request, *args, **kwargs)
 
 
@@ -256,6 +280,17 @@ def _invalidate_other_sessions(user_pk: int, keep_session_key: str | None = None
 class PasswordResetConfirmView(DjangoPasswordResetConfirmView):
     template_name = "registration/password_reset_confirm.html"
     success_url = reverse_lazy("accounts:password_reset_complete")
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        uidb64 = str(self.kwargs.get("uidb64", ""))
+        result = ratelimit.check(
+            "password_reset_confirm",
+            f"{client_ip(request)}:{uidb64}",
+            **RATE_LIMITS["password_reset_confirm"],
+        )
+        if not result.allowed:
+            return _rate_limited(request)
+        return super().post(request, *args, **kwargs)
 
     def form_valid(self, form: PasswordResetForm) -> HttpResponse:
         response = super().form_valid(form)
@@ -311,9 +346,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
 
     partner = get_partner(user, partnership) if partnership is not None else None
     partner_name = safe_display_name(partner) if partner and not is_pending else None
-    pending_partner_name = (
-        safe_display_name(partner) if partner and is_pending else None
-    )
+    pending_partner_name = safe_display_name(partner) if partner and is_pending else None
 
     return render(
         request,

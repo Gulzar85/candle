@@ -10,6 +10,7 @@
  * pixels relative to the top-left of the stage, matching the canvas `size`.
  */
 
+import type { HandleId } from "./geometry";
 import type { Point, Size, Tool, Viewport } from "./types";
 import { panBy, screenToWorld, zoomAt } from "./viewport";
 
@@ -32,6 +33,22 @@ export interface Host {
   onPanBy(dx: number, dy: number): void;
   /** A click with the select tool (no drag) — used for hit-test selection. */
   onSelect(world: Point): void;
+
+  /** Is `world` on one of the currently-selected object's resize handles? */
+  hitTestHandle(world: Point): HandleId | null;
+  /** Is `world` on the currently-selected object's own body (for drag-to-move,
+   * as opposed to a plain re-click or a pan)? */
+  hitTestSelectedBody(world: Point): boolean;
+
+  onBeginResize(handle: HandleId, world: Point): void;
+  onResizeMove(world: Point): void;
+  onEndResize(world: Point): void;
+  onCancelResize(): void;
+
+  onBeginObjectDrag(world: Point): void;
+  onObjectDragMove(world: Point): void;
+  onEndObjectDrag(world: Point): void;
+  onCancelObjectDrag(): void;
 }
 
 const MIDDLE_BUTTON = 1;
@@ -41,24 +58,53 @@ const SELECT_CLICK_TOLERANCE = 6;
 
 export class InputController {
   private activePointer = 0;
-  private mode: "none" | "draw" | "pan" | "click" | "pinch" = "none";
+  private mode: "none" | "draw" | "pan" | "click" | "pinch" | "resize" | "drag-object" = "none";
   private lastScreen: Point | null = null;
+  /** Set at press-down when the select tool presses the selected object's own
+   * body — determines whether a drag past tolerance becomes an object-move
+   * (true) or a pan (false), mirroring the existing click-vs-pan tolerance. */
+  private dragIsObjectMove = false;
   /** Live touch pointers, keyed by pointerId — tracked to detect a second
    * finger for pinch-zoom / two-finger pan, independent of `activePointer`. */
   private readonly touches = new Map<number, Point>();
   private pinchPrevDist = 0;
   private pinchPrevCenter: Point | null = null;
 
+  private stage: HTMLElement | null = null;
+  private readonly boundDown = (e: PointerEvent): void => this.onPointerDown(e);
+  private readonly boundMove = (e: PointerEvent): void => this.onPointerMove(e);
+  private readonly boundUp = (e: PointerEvent): void => this.onPointerUp(e);
+  private readonly boundCancel = (e: PointerEvent): void => this.onPointerCancel(e);
+  private readonly boundLeave = (e: PointerEvent): void => this.onPointerLeave(e);
+  private readonly boundWheel = (e: WheelEvent): void => this.onWheel(e);
+  private readonly boundContextMenu = (e: Event): void => e.preventDefault();
+
   constructor(private readonly host: Host) {}
 
   attach(stage: HTMLElement): void {
-    stage.addEventListener("pointerdown", (e) => this.onPointerDown(e));
-    stage.addEventListener("pointermove", (e) => this.onPointerMove(e));
-    stage.addEventListener("pointerup", (e) => this.onPointerUp(e));
-    stage.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
-    stage.addEventListener("pointerleave", (e) => this.onPointerLeave(e));
-    stage.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
-    stage.addEventListener("contextmenu", (e) => e.preventDefault());
+    this.stage = stage;
+    stage.addEventListener("pointerdown", this.boundDown);
+    stage.addEventListener("pointermove", this.boundMove);
+    stage.addEventListener("pointerup", this.boundUp);
+    stage.addEventListener("pointercancel", this.boundCancel);
+    stage.addEventListener("pointerleave", this.boundLeave);
+    stage.addEventListener("wheel", this.boundWheel, { passive: false });
+    stage.addEventListener("contextmenu", this.boundContextMenu);
+  }
+
+  /** Remove every listener added by `attach`. Safe to call more than once. */
+  detach(): void {
+    if (!this.stage) return;
+    this.stage.removeEventListener("pointerdown", this.boundDown);
+    this.stage.removeEventListener("pointermove", this.boundMove);
+    this.stage.removeEventListener("pointerup", this.boundUp);
+    this.stage.removeEventListener("pointercancel", this.boundCancel);
+    this.stage.removeEventListener("pointerleave", this.boundLeave);
+    this.stage.removeEventListener("wheel", this.boundWheel);
+    this.stage.removeEventListener("contextmenu", this.boundContextMenu);
+    this.stage = null;
+    this.touches.clear();
+    this.reset();
   }
 
   private screenOf(e: { clientX: number; clientY: number; currentTarget: EventTarget | null }): Point {
@@ -96,9 +142,19 @@ export class InputController {
       this.mode = "pan";
       this.host.onBeginPan(screen);
     } else if (this.host.tool === "select") {
-      // Wait for movement before declaring a pan; a small press+release selects.
-      this.mode = "click";
-      this.lastScreen = screen;
+      const handle = this.host.hitTestHandle(world);
+      if (handle) {
+        // A press directly on a handle is unambiguous — no tolerance needed,
+        // unlike the click-vs-drag decision below.
+        this.mode = "resize";
+        this.host.onBeginResize(handle, world);
+      } else {
+        // Wait for movement before declaring a pan or an object drag; a
+        // small press+release just selects (existing behavior unchanged).
+        this.mode = "click";
+        this.lastScreen = screen;
+        this.dragIsObjectMove = this.host.hitTestSelectedBody(world);
+      }
     } else if (this.host.tool === "pen" || this.host.tool === "eraser") {
       this.mode = "draw";
       this.host.onBeginPoint(world);
@@ -115,8 +171,11 @@ export class InputController {
   private beginPinch(e: PointerEvent): void {
     if (this.mode === "draw") this.host.onCancelPoint();
     else if (this.mode === "pan") this.host.onEndPan();
+    else if (this.mode === "resize") this.host.onCancelResize();
+    else if (this.mode === "drag-object") this.host.onCancelObjectDrag();
     this.activePointer = 0;
     this.lastScreen = null;
+    this.dragIsObjectMove = false;
     this.mode = "pinch";
     const pts = Array.from(this.touches.values());
     this.pinchPrevDist = distance(pts[0], pts[1]);
@@ -153,14 +212,25 @@ export class InputController {
       this.host.onMovePan(screen);
     } else if (this.mode === "draw") {
       this.host.onMovePoint(this.worldOf(screen));
+    } else if (this.mode === "resize") {
+      this.host.onResizeMove(this.worldOf(screen));
+    } else if (this.mode === "drag-object") {
+      this.host.onObjectDragMove(this.worldOf(screen));
     } else if (this.mode === "click" && this.lastScreen) {
       const dx = screen.x - this.lastScreen.x;
       const dy = screen.y - this.lastScreen.y;
       if (dx * dx + dy * dy > SELECT_CLICK_TOLERANCE * SELECT_CLICK_TOLERANCE) {
-        // It became a drag -> pan.
-        this.mode = "pan";
-        this.host.onBeginPan(this.lastScreen);
-        this.host.onMovePan(screen);
+        if (this.dragIsObjectMove) {
+          // It became a drag on the selected object's body -> move it.
+          this.mode = "drag-object";
+          this.host.onBeginObjectDrag(this.worldOf(this.lastScreen));
+          this.host.onObjectDragMove(this.worldOf(screen));
+        } else {
+          // It became a drag elsewhere -> pan.
+          this.mode = "pan";
+          this.host.onBeginPan(this.lastScreen);
+          this.host.onMovePan(screen);
+        }
       }
     }
   }
@@ -177,6 +247,10 @@ export class InputController {
       this.host.onEndPan();
     } else if (this.mode === "draw") {
       this.host.onEndPoint(this.worldOf(screen));
+    } else if (this.mode === "resize") {
+      this.host.onEndResize(this.worldOf(screen));
+    } else if (this.mode === "drag-object") {
+      this.host.onEndObjectDrag(this.worldOf(screen));
     } else if (this.mode === "click") {
       this.host.onSelect(this.worldOf(screen));
     }
@@ -192,6 +266,8 @@ export class InputController {
     if (e.pointerId !== this.activePointer) return;
     if (this.mode === "draw") this.host.onCancelPoint();
     if (this.mode === "pan") this.host.onEndPan();
+    if (this.mode === "resize") this.host.onCancelResize();
+    if (this.mode === "drag-object") this.host.onCancelObjectDrag();
     this.reset();
   }
 
@@ -222,6 +298,7 @@ export class InputController {
     this.lastScreen = null;
     this.pinchPrevDist = 0;
     this.pinchPrevCenter = null;
+    this.dragIsObjectMove = false;
   }
 }
 

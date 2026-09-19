@@ -88,10 +88,16 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
                 origin = value.decode("utf-8", "ignore")
                 break
         allowed = set(getattr(settings, "WEBSOCKET_ALLOWED_ORIGINS", []) or [])
+        # An empty allowlist, or an explicit "*", permits any origin. The
+        # development default is "*" (see development.py) so device/LAN testing
+        # is not silently degraded to HTTP-only; production requires an explicit
+        # allowlist and never uses "*".
+        if "*" in allowed or not allowed:
+            return True
         # No Origin header (non-browser clients) is permitted only when the
         # origin allowlist is empty; otherwise it must match.
         if not origin:
-            return not allowed
+            return False
         return origin in allowed
 
     def _rate_limited(self, window: int, limit: int, times: list[float], now: float) -> bool:
@@ -121,7 +127,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
         ok, code, message = await self._authorize(user)
         if not ok:
             await self._send_error(code, message)
-            await self.close(code=rt.CLOSE_POLICY_VIOLATION if code == rt.E_FORBIDDEN else rt.CLOSE_INVALID_DATA)
+            await self.close(
+                code=rt.CLOSE_POLICY_VIOLATION if code == rt.E_FORBIDDEN else rt.CLOSE_INVALID_DATA
+            )
             return
 
         self.user: User = user
@@ -157,14 +165,18 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
         # the client can set its initial sync baseline and render the roster.
         partner = await database_sync_to_async(get_partner)(user, self.partnership)
         version = await database_sync_to_async(selectors.latest_version)(self.whiteboard)
-        await self.send(text_data=json.dumps({
-            "type": rt.S_CONNECTION_READY,
-            "protocol_version": rt.PROTOCOL_VERSION,
-            "connection_id": self.channel_name,
-            "version": version,
-            "user": await _user_public(self.user),
-            "partner": await _user_public(partner) if partner else None,
-        }))
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": rt.S_CONNECTION_READY,
+                    "protocol_version": rt.PROTOCOL_VERSION,
+                    "connection_id": self.channel_name,
+                    "version": version,
+                    "user": await _user_public(self.user),
+                    "partner": await _user_public(partner) if partner else None,
+                }
+            )
+        )
 
     async def disconnect(self, code: int) -> None:
         if getattr(self, "user", None) is not None:
@@ -173,7 +185,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
             if getattr(self, "user", None) is not None:
                 logger.info(
-                    "ws.disconnected public_id=%s user=%s", self._url_public_id(), self.user.public_id
+                    "ws.disconnected public_id=%s user=%s",
+                    self._url_public_id(),
+                    self.user.public_id,
                 )
                 await self.channel_layer.group_send(
                     self.group_name,
@@ -194,7 +208,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
             return
 
         now = time.time()
-        if self._rate_limited(rt.RATE_MESSAGES_WINDOW, rt.RATE_MESSAGES_LIMIT, self._msg_times, now):
+        if self._rate_limited(
+            rt.RATE_MESSAGES_WINDOW, rt.RATE_MESSAGES_LIMIT, self._msg_times, now
+        ):
             logger.warning("ws.rate_limited public_id=%s", self._url_public_id())
             await self._send_error(rt.E_RATE_LIMITED, _RATE_MSG)
             return
@@ -207,27 +223,49 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
             return
 
         if not isinstance(message, dict) or not isinstance(message.get("type"), str):
-            await self._send_error(rt.E_INVALID_MESSAGE, "Message must be a JSON object with a type.")
+            await self._send_error(
+                rt.E_INVALID_MESSAGE, "Message must be a JSON object with a type."
+            )
             return
 
         handler = getattr(self, f"_on_{message['type'].replace('.', '_')}", None)
         if handler is None:
-            await self._send_error(rt.E_INVALID_MESSAGE, f"Unsupported message type: {message['type']}")
+            await self._send_error(
+                rt.E_INVALID_MESSAGE, f"Unsupported message type: {message['type']}"
+            )
             return
 
         # Re-authorize on every message so revoked access cannot keep writing.
-        if not await self._still_authorized():
-            logger.warning("ws.access_revoked public_id=%s", self._url_public_id())
-            await self._send_error(rt.E_FORBIDDEN, "Access has been revoked.")
-            await self.close(code=rt.CLOSE_GOING_AWAY)
+        if not await self._enforce_still_authorized():
             return
 
         await handler(message)
 
+    async def whiteboard_reauthorize(self, _event: dict[str, Any]) -> None:
+        """Group broadcast: something (e.g. the partnership ending) may have
+        changed this connection's access. Re-check now instead of waiting for
+        this client's next outbound message — closes the gap where a purely
+        passive, now-revoked listener would otherwise keep receiving
+        broadcasts indefinitely. A still-authorized connection is unaffected.
+        """
+        await self._enforce_still_authorized()
+
+    async def _enforce_still_authorized(self) -> bool:
+        """Close the connection if it is no longer authorized. Returns whether
+        it is still authorized (i.e. whether the caller should proceed)."""
+        if await self._still_authorized():
+            return True
+        logger.warning("ws.access_revoked public_id=%s", self._url_public_id())
+        await self._send_error(rt.E_FORBIDDEN, "Access has been revoked.")
+        await self.close(code=rt.CLOSE_GOING_AWAY)
+        return False
+
     # ------------------------------------------------------- protocol: ops
     async def _on_operation_submit(self, message: dict[str, Any]) -> None:
         now = time.time()
-        if self._rate_limited(rt.RATE_SUBMITS_WINDOW, rt.RATE_SUBMITS_LIMIT, self._submit_times, now):
+        if self._rate_limited(
+            rt.RATE_SUBMITS_WINDOW, rt.RATE_SUBMITS_LIMIT, self._submit_times, now
+        ):
             logger.warning("ws.submit_rate_limited public_id=%s", self._url_public_id())
             await self._send_error(rt.E_RATE_LIMITED, _SUBMIT_MSG)
             return
@@ -245,9 +283,7 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
         )
 
         try:
-            result = await database_sync_to_async(self._submit_sync)(
-                whiteboard, actor, svc_op
-            )
+            result = await database_sync_to_async(self._submit_sync)(whiteboard, actor, svc_op)
         except WhiteboardAPIError as exc:
             await self._reject_submit_error(exc)
             return
@@ -315,18 +351,24 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
     async def _on_sync_request(self, message: dict[str, Any]) -> None:
         client_version = message.get("version")
         if not isinstance(client_version, int) or client_version < 0:
-            await self._send_error(rt.E_INVALID_MESSAGE, "sync.request requires a non-negative integer version.")
+            await self._send_error(
+                rt.E_INVALID_MESSAGE, "sync.request requires a non-negative integer version."
+            )
             return
 
         board_version = await database_sync_to_async(selectors.latest_version)(self.whiteboard)
 
         if client_version >= board_version:
             # Nothing to catch up on; just confirm the current version.
-            await self.send(text_data=json.dumps({
-                "type": rt.S_SYNC_OPS,
-                "version": board_version,
-                "operations": [],
-            }))
+            await self.send(
+                text_data=json.dumps(
+                    {
+                        "type": rt.S_SYNC_OPS,
+                        "version": board_version,
+                        "operations": [],
+                    }
+                )
+            )
             return
 
         # Client is behind: give it the missing operations. The client applies
@@ -334,15 +376,22 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
         # streaming would be costly/redundant, the client may instead do a full
         # HTTP reload; we keep incremental sync simple and bounded (no paging in
         # Phase 5 — reuse the HTTP operation list for very large gaps).
-        ops = await database_sync_to_async(_fetch_ops_after)(
-            self.whiteboard, client_version
+        ops = await database_sync_to_async(_fetch_ops_after)(self.whiteboard, client_version)
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": rt.S_SYNC_OPS,
+                    "version": board_version,
+                    "operations": ops,
+                }
+            )
         )
-        await self.send(text_data=json.dumps({
-            "type": rt.S_SYNC_OPS,
-            "version": board_version,
-            "operations": ops,
-        }))
-        logger.info("ws.sync_completed public_id=%s from=%s to=%s", self._url_public_id(), client_version, board_version)
+        logger.info(
+            "ws.sync_completed public_id=%s from=%s to=%s",
+            self._url_public_id(),
+            client_version,
+            board_version,
+        )
 
     async def _on_presence_cursor(self, message: dict[str, Any]) -> None:
         await self.channel_layer.group_send(
@@ -376,7 +425,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
     # ------------------------------------------------------------- auth/z
     async def _authorize(self, user: User) -> tuple[bool, str, str]:
         public_id = self._url_public_id()
-        partnership = await database_sync_to_async(selectors.whiteboard_by_partnership_public_id)(public_id)
+        partnership = await database_sync_to_async(selectors.whiteboard_by_partnership_public_id)(
+            public_id
+        )
         if partnership is None:
             return False, rt.E_WHITEBOARD_NOT_FOUND, "Whiteboard not found."
         if partnership.is_active is False:
@@ -384,7 +435,9 @@ class WhiteboardConsumer(AsyncWebsocketConsumer):  # type: ignore[misc]
         if not await database_sync_to_async(_can_access)(user, partnership):
             return False, rt.E_FORBIDDEN, "You do not have access to this whiteboard."
 
-        whiteboard = await database_sync_to_async(selectors.whiteboard_for_partnership)(partnership)
+        whiteboard = await database_sync_to_async(selectors.whiteboard_for_partnership)(
+            partnership
+        )
         if await database_sync_to_async(lambda: whiteboard.is_archived)():
             return False, rt.E_WHITEBOARD_ARCHIVED, "This whiteboard is archived and read-only."
 

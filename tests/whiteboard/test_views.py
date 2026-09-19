@@ -56,7 +56,9 @@ class WhiteboardAccessTests(WhiteboardTestCase):
         self.assertContains(resp, f'data-wb-public-id="{expected}"', html=False)
         self.assertContains(resp, f'data-wb-api-base="/api/whiteboards/{expected}"', html=False)
         # And must NOT key the page off the whiteboard's own (distinct) uuid.
-        self.assertNotContains(resp, f'data-wb-public-id="{self.partnership.whiteboard.public_id}"')
+        self.assertNotContains(
+            resp, f'data-wb-public-id="{self.partnership.whiteboard.public_id}"'
+        )
 
     def test_lazy_whiteboard_created_for_active_partnership(self) -> None:
         self.client.force_login(self.bobby)

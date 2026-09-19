@@ -8,7 +8,8 @@
  * board redraw per pointer move.
  */
 
-import type { Size, Stroke, Viewport } from "./types";
+import { handlePositions, visibleHandles } from "./geometry";
+import type { Point, Size, Stroke, Viewport } from "./types";
 
 export interface RenderState {
   readonly viewport: Viewport;
@@ -97,6 +98,32 @@ export class Renderer {
     if (selectedId) this.drawSelection(board.strokes, selectedId);
   }
 
+  /**
+   * Render the board with one stroke's points temporarily overridden — used
+   * for live move/resize preview (Phase 9). Unlike `render()`, this always
+   * does a full direct redraw and never touches the cached static bake, so
+   * cancelling the gesture and calling `render()` again correctly restores
+   * the untouched cached layer with no extra invalidation bookkeeping.
+   */
+  renderWithOverride(
+    board: { readonly strokes: readonly Stroke[]; readonly version: number },
+    viewport: Viewport,
+    size: Size,
+    overrideId: string,
+    overridePoints: readonly Point[],
+    selectedId: string | null,
+  ): void {
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.setTransform(this.ctx, viewport, size);
+
+    const strokes = board.strokes.map((s) =>
+      s.id === overrideId ? { ...s, points: overridePoints } : s,
+    );
+    for (const stroke of strokes) this.drawStroke(this.ctx, stroke);
+    if (selectedId) this.drawSelection(strokes, selectedId);
+  }
+
   private bakeStatic(strokes: readonly Stroke[], viewport: Viewport, size: Size): void {
     this.staticCtx.setTransform(1, 0, 0, 1, 0, 0);
     this.staticCtx.clearRect(0, 0, this.staticCanvas.width, this.staticCanvas.height);
@@ -118,17 +145,37 @@ export class Renderer {
       if (p.y > maxY) maxY = p.y;
     }
     const pad = stroke.style.width / 2 + 6;
+    const box = { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
     this.ctx.globalAlpha = 1;
     this.ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
     this.ctx.lineWidth = 2 / this._zoom();
     this.ctx.setLineDash([6 / this._zoom(), 4 / this._zoom()]);
-    this.ctx.strokeRect(
-      minX - pad,
-      minY - pad,
-      maxX - minX + pad * 2,
-      maxY - minY + pad * 2,
-    );
+    this.ctx.strokeRect(box.minX, box.minY, box.maxX - box.minX, box.maxY - box.minY);
     this.ctx.setLineDash([]);
+    this.drawHandles(box);
+  }
+
+  /** Draw resize handles at a fixed screen size (divided by zoom, matching
+   * the dash pattern above) around `box`. Handles that would require
+   * deriving a scale from a ~zero bbox dimension are simply never drawn —
+   * the ill-defined gesture is never offered (see geometry.ts
+   * `visibleHandles`). */
+  private drawHandles(box: { minX: number; minY: number; maxX: number; maxY: number }): void {
+    const visible = visibleHandles(box);
+    if (visible.length === 0) return;
+    const positions = handlePositions(box);
+    const size = 8 / this._zoom();
+    this.ctx.fillStyle = "#ffffff";
+    this.ctx.strokeStyle = "rgba(37, 99, 235, 0.9)";
+    this.ctx.lineWidth = 1.5 / this._zoom();
+    this.ctx.setLineDash([]);
+    for (const id of visible) {
+      const p = positions[id];
+      this.ctx.beginPath();
+      this.ctx.rect(p.x - size / 2, p.y - size / 2, size, size);
+      this.ctx.fill();
+      this.ctx.stroke();
+    }
   }
 
   private _zoom(): number {

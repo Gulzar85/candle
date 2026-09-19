@@ -1,6 +1,8 @@
 # Offline-First Architecture
 
 **Date:** 2026-09-03
+**Updated:** 2026-09-04 — rewritten to match the post-bugfix engine (no
+client-side conflict quarantine; see §4–§5).
 **Scope:** Phase 6 — durable offline authoring and reconciliation for Candle.
 **Status:** Implemented and tested (frontend unit + type + build; backend checks).
 
@@ -18,7 +20,7 @@ connectivity returns.
 This document is the top-level map. Companion documents:
 
 - `docs/architecture/sync-engine.md` — lifecycle, retry, push logic, crash recovery.
-- `docs/architecture/offline-conflict-matrix.md` — per-operation-type reconciliation policy.
+- `docs/architecture/offline-conflict-matrix.md` — offline submission/version policy.
 - `docs/architecture/indexeddb-schema.md` — schema, indexes, limits, eviction.
 - `docs/architecture/pwa-caching.md` — service worker strategy and privacy rules.
 - `docs/architecture/phase-6-audit.md` — pre-implementation findings and decisions.
@@ -30,11 +32,18 @@ This document is the top-level map. Companion documents:
    changes.
 2. **Offline authoring** — drawing works with no network. State restores from a
    logical (not pixel) cache on reopen.
-3. **Automatic reconciliation** — on reconnect, pending operations are pushed in
-   order; additive operations rebase; destructive operations are quarantined for
-   review rather than dangerously auto-applied.
-4. **Conflict quarantine** — undecidable operations are surfaced in a UI panel,
-   never silently dropped or blindly replayed.
+3. **Automatic reconciliation** — on reconnect, pending operations are flushed
+   in order against the newest server version (anchored at pass start, advanced
+   by each ack). The server stays the single authority: `STALE_VERSION` re-anchors
+   and re-runs the pass, `operation_id` idempotency dedupes re-submits, and a
+   genuine permanent rejection marks the operation `FAILED` (a save error)
+   rather than silently dropping it.
+4. **No client-side conflict quarantine** — operations are never parked for
+   review, and there is no conflict panel. A flush always carries the newest
+   base, so the client cannot accidentally submit stale work; a permanently
+   rejected operation is surfaced as an explicit error state. Legacy quarantined
+   rows from earlier builds are healed into the pending queue at reopen
+   (`SyncEngine.requeueConflicts`).
 5. **App shell** — a conservative service worker lets the app load offline while
    never caching private, account-scoped data.
 6. **Account partitioning** — all device data is scoped by `ownerKey`
@@ -70,17 +79,13 @@ error rather than a false success.
 2. `runSync` reads pending operations (ordered by `client_sequence`) and the
    current server version (preferred: from the realtime controller's confirmed
    version; fallback: client's cached version).
-3. `pushPending` classifies every op via `decideReconciliation`:
-   - **submit** — server version equals the op's base version (no divergence).
-   - **rebase** — additive op (create_stroke) when the server advanced; re-based
-     to the new base before submission.
-   - **reject / quarantine** — destructive op (clear_canvas) or an unknown/unsafe
-     case when the server advanced; stored in the `conflicts` store and exposed
-     to the UI. The underlying op is marked `CONFLICT` so it leaves the pending
-     queue but is never deleted.
-4. Submittable ops are sent **in order, one at a time** (idempotency + base-version
-   validation). Confirmed ops are compacted out of the queue once the server
-   acknowledges them.
+3. `pushPending` submits every op **in order, one at a time**, always anchored
+   to the newest known version at that moment (the pass-start anchor, advanced
+   by each ack). There is no client-side classification step — no `rebase`, no
+   `reject`, no quarantine. A `STALE_VERSION` reply re-anchors to the
+   server-reported `current_version` and re-runs the pass.
+4. Confirmed ops are compacted out of the queue once the server acknowledges
+   them (their ack also advances the pass anchor).
 
 ## 5. Durability, retry, and crash recovery
 
@@ -90,9 +95,11 @@ error rather than a false success.
 - Network / 0 / 5xx errors retry with exponential backoff capped at 30s
   (`retry_count` up to `MAX_RETRIES = 8`). Exhausting retries marks the op
   `FAILED` (never silently dropped).
-- Rate limiting (429) honors `retry_after`. `STALE_VERSION` triggers an immediate
-  re-sync against the server-reported current version. Permanent rejections
-  (`FORBIDDEN`, `WHITEBOARD_ARCHIVED`, other 4xx) are quarantined.
+- Rate limiting (429) honors `retry_after`. `STALE_VERSION` re-anchors to the
+  server-reported `current_version` and re-schedules the pass. Permanent
+  rejections (`FORBIDDEN`, `WHITEBOARD_ARCHIVED`, other 4xx) mark the operation
+  `FAILED` — a save error the user can retry against fresh state, never a
+  blocking quarantine.
 
 See `docs/architecture/sync-engine.md` for the full lifecycle table.
 
@@ -112,17 +119,38 @@ See `docs/architecture/sync-engine.md` for the full lifecycle table.
 - **No server authority shift.** Every local op is revalidated by version/base
   checks and idempotency keys on the server. The client can only *defer* the
   decision to the server, never assert it.
-- **Scoped storage.** Every record carries `owner_key`. All reads are filtered by
-  the owner partition. Logout with unsynced work is guarded
-  (`hasUnsyncedWork`); logging out clears only the caller's partition.
+- **Scoped storage.** Every record carries `owner_key` (the account's
+  `public_id`). All reads are filtered by the owner partition, which is what
+  keeps User A's cache from ever surfacing to User B on a shared device.
+- **Logout policy: preserve, never destroy.** Logging out does **not** clear
+  IndexedDB — `SyncEngine.clearLocalData()` / `hasUnsyncedWork()` exist as
+  primitives (`local-store.ts`) but are deliberately **not** wired to the
+  logout action. Clearing on logout would be the *unsafe* choice here: a
+  user with unsynced offline strokes who logs out (deliberately or via
+  session expiry) must not have that work deleted before it ever reached the
+  server. Because `owner_key` is the account's stable `public_id` (not a
+  session id), the same account logging back in on the same device resumes
+  exactly where it left off and the pending queue syncs normally — this is
+  the "keep local pending data associated with the account" policy the
+  offline spec allows as an alternative to blocking logout outright.
+  A proactive "you have unsynced changes" confirmation *before* logout would
+  need `hasUnsyncedWork()` reachable from every page with a sign-out control
+  (the account menu, Settings), which today would mean loading
+  whiteboard-only IndexedDB code into pages that never otherwise need it.
+  Worth revisiting (e.g. via a small `localStorage` flag the whiteboard page
+  maintains) if this becomes a real point of user confusion; deferred for now
+  since the underlying data-loss risk it would prevent doesn't actually
+  exist — nothing is destroyed either way.
 - **Service worker never caches API responses** or authenticated HTML. Offline API
   calls return a terse `OFFLINE` response rather than fabricated data. This
   prevents cross-account data leakage on a shared device.
 
 ## 8. Non-goals (explicit)
 
-- No CRDT / conflict-free replicated data type. Reconciliation is a proscribed
-  policy per op type (see conflict matrix).
+- No CRDT / conflict-free replicated data type. Clients never decide merge
+  semantics: they push against the newest server version, and the server is the
+  sole authority on what commits (base-version validation + idempotency). See
+  `docs/architecture/offline-conflict-matrix.md`.
 - No op-based vectored merge for arbitrary divergent histories — heavily diverged
   boards recover via a full HTTP resync
   (`STALE_VERSION` → `sync.ops` replay).
@@ -135,9 +163,8 @@ See `docs/architecture/sync-engine.md` for the full lifecycle table.
 |--------|----------------|
 | `whiteboard/idb.ts` | Promise-based IndexedDB wrapper (open/upgrade/read/write helpers). |
 | `whiteboard/local-store.ts` | `WhiteboardLocalStore` — sole typed IndexedDB access; schema, indexes, limits, eviction. |
-| `whiteboard/sync-engine.ts` | `SyncEngine` — durable queue owner, push/reconcile, retry, crash recovery. |
+| `whiteboard/sync-engine.ts` | `SyncEngine` — durable queue owner, always-anchored push, retry, crash recovery, legacy-conflict healing. |
 | `whiteboard/sync.ts` | `SyncManager` — public facade; durable-first, HTTP-only fallback when unscoped. |
-| `whiteboard/conflict-resolver.ts` | Pure reconciliation + human-readable conflict messages. |
 | `whiteboard/network-monitor.ts` | Connectivity state (navigator + transport signals). |
 | `whiteboard/client-id.ts` | Persistent installation client ID. |
 | `static/sw.js` | Service worker — app-shell-only caching, network-first navigation/API. |
@@ -146,7 +173,7 @@ See `docs/architecture/sync-engine.md` for the full lifecycle table.
 
 - Frontend unit tests run in Node against an in-memory fake store (no IndexedDB
   in Vitest): `sync-engine.test.ts`, `sync.test.ts` (HTTP-only fallback),
-  `conflict-resolver.test.ts`, `network-monitor.test.ts`.
+  `network-monitor.test.ts`.
 - `tsc --noEmit` clean; `vite build` succeeds; `python manage.py check` clean.
 - Browser-level offline/restart/revocation checks are documented as a manual
   pass in `docs/phase-6-completion-report.md`.

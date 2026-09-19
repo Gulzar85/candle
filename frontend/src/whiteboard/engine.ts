@@ -14,7 +14,17 @@
  * it remains DOM+state only.
  */
 
-import { boundsOf, unionBounds } from "./geometry";
+import {
+  boundsOf,
+  computeResizeTransform,
+  handlePositions,
+  nearestHandle,
+  scalePointsFromAnchor,
+  translatePoints,
+  unionBounds,
+  visibleHandles,
+} from "./geometry";
+import type { HandleId } from "./geometry";
 import { clipToEraser, finalizePenStroke, hitsStroke } from "./tools";
 import type { Host } from "./input";
 import { InputController } from "./input";
@@ -54,6 +64,8 @@ export interface StatusInfo {
 
 const ERASER_RADIUS = 12;
 const SELECT_TOLERANCE = 12; // hit-test radius in world units for clicking a stroke
+const HANDLE_TOLERANCE = 14; // hit-test radius in world units for grabbing a resize handle
+const TRANSFORM_EPSILON = 1e-6; // below this, a move/resize gesture is a no-op (skip commit)
 
 export class Engine implements Host {
   private readonly renderer: Renderer;
@@ -74,6 +86,14 @@ export class Engine implements Host {
   private onStatus: (info: StatusInfo) => void = () => {};
   private _serverVersion = 0;
   private selectedId: string | null = null;
+  /** Live (not-yet-committed) move/resize preview: the selected object's id
+   * plus its would-be new points, drawn via Renderer.renderWithOverride. */
+  private liveTransform: { objectId: string; points: readonly Point[] } | null = null;
+  private dragOriginalStroke: Stroke | null = null;
+  private dragStartWorld: Point | null = null;
+  private resizeOriginalStroke: Stroke | null = null;
+  private resizeBBox: BBox | null = null;
+  private resizeHandle: HandleId | null = null;
 
   constructor(
     private readonly stage: HTMLElement,
@@ -90,10 +110,11 @@ export class Engine implements Host {
   attach(): void {
     this.input.attach(this.stage);
     this.boundKeydown = (e) => this.handleGlobalKeydown(e);
-    window.addEventListener("keydown", this.boundKeydown);
-    window.addEventListener("keyup", (e) => {
+    this.boundKeyup = (e) => {
       if (e.code === "Space") this.spaceHeld = false;
-    });
+    };
+    window.addEventListener("keydown", this.boundKeydown);
+    window.addEventListener("keyup", this.boundKeyup);
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.stage);
     this.handleResize();
@@ -103,9 +124,12 @@ export class Engine implements Host {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     if (this.boundKeydown) window.removeEventListener("keydown", this.boundKeydown);
+    if (this.boundKeyup) window.removeEventListener("keyup", this.boundKeyup);
+    this.input.detach();
   }
 
   private boundKeydown: ((e: KeyboardEvent) => void) | null = null;
+  private boundKeyup: ((e: KeyboardEvent) => void) | null = null;
 
   setStatusHandler(fn: (info: StatusInfo) => void): void {
     this.onStatus = fn;
@@ -259,6 +283,132 @@ export class Engine implements Host {
       }
     }
     return null;
+  }
+
+  private selectedStroke(): Stroke | null {
+    if (!this.selectedId) return null;
+    return this.board.strokes.find((s) => s.id === this.selectedId) ?? null;
+  }
+
+  // -------------------------------------------------------- move / resize
+  hitTestHandle(world: Point): HandleId | null {
+    const stroke = this.selectedStroke();
+    if (!stroke) return null;
+    const box = boundsOf(stroke.points);
+    if (!box) return null;
+    const visible = visibleHandles(box);
+    if (visible.length === 0) return null;
+    return nearestHandle(world, handlePositions(box), visible, HANDLE_TOLERANCE);
+  }
+
+  hitTestSelectedBody(world: Point): boolean {
+    const stroke = this.selectedStroke();
+    return stroke ? hitsStroke(world, stroke, SELECT_TOLERANCE) : false;
+  }
+
+  onBeginResize(handle: HandleId, _world: Point): void {
+    const stroke = this.selectedStroke();
+    const box = stroke ? boundsOf(stroke.points) : null;
+    if (!stroke || !box) return;
+    this.resizeOriginalStroke = stroke;
+    this.resizeBBox = box;
+    this.resizeHandle = handle;
+  }
+
+  onResizeMove(world: Point): void {
+    if (!this.resizeOriginalStroke || !this.resizeBBox || !this.resizeHandle) return;
+    const { anchor, scaleX, scaleY } = computeResizeTransform(
+      this.resizeBBox,
+      this.resizeHandle,
+      world,
+    );
+    this.liveTransform = {
+      objectId: this.resizeOriginalStroke.id,
+      points: scalePointsFromAnchor(this.resizeOriginalStroke.points, anchor, scaleX, scaleY),
+    };
+    this.render();
+  }
+
+  onEndResize(world: Point): void {
+    const from = this.resizeOriginalStroke;
+    const box = this.resizeBBox;
+    const handle = this.resizeHandle;
+    this.resizeOriginalStroke = null;
+    this.resizeBBox = null;
+    this.resizeHandle = null;
+    this.liveTransform = null;
+    if (!from || !box || !handle) {
+      this.render();
+      return;
+    }
+    const { anchor, scaleX, scaleY } = computeResizeTransform(box, handle, world);
+    if (Math.abs(scaleX - 1) < TRANSFORM_EPSILON && Math.abs(scaleY - 1) < TRANSFORM_EPSILON) {
+      // A press+release directly on a handle with no real drag -- no-op.
+      this.render();
+      this.emitStatus();
+      return;
+    }
+    const to: Stroke = { ...from, points: scalePointsFromAnchor(from.points, anchor, scaleX, scaleY) };
+    this.commit({ type: "resize", from, to, anchor, scaleX, scaleY });
+    this.render();
+    this.emitStatus();
+  }
+
+  onCancelResize(): void {
+    this.resizeOriginalStroke = null;
+    this.resizeBBox = null;
+    this.resizeHandle = null;
+    this.liveTransform = null;
+    this.render();
+  }
+
+  onBeginObjectDrag(world: Point): void {
+    const stroke = this.selectedStroke();
+    if (!stroke) return;
+    this.dragOriginalStroke = stroke;
+    this.dragStartWorld = world;
+  }
+
+  onObjectDragMove(world: Point): void {
+    if (!this.dragOriginalStroke || !this.dragStartWorld) return;
+    const dx = world.x - this.dragStartWorld.x;
+    const dy = world.y - this.dragStartWorld.y;
+    this.liveTransform = {
+      objectId: this.dragOriginalStroke.id,
+      points: translatePoints(this.dragOriginalStroke.points, dx, dy),
+    };
+    this.render();
+  }
+
+  onEndObjectDrag(world: Point): void {
+    const from = this.dragOriginalStroke;
+    const start = this.dragStartWorld;
+    this.dragOriginalStroke = null;
+    this.dragStartWorld = null;
+    this.liveTransform = null;
+    if (!from || !start) {
+      this.render();
+      return;
+    }
+    const dx = world.x - start.x;
+    const dy = world.y - start.y;
+    if (Math.abs(dx) < TRANSFORM_EPSILON && Math.abs(dy) < TRANSFORM_EPSILON) {
+      // A press+release on the selected object's body with no real drag.
+      this.render();
+      this.emitStatus();
+      return;
+    }
+    const to: Stroke = { ...from, points: translatePoints(from.points, dx, dy) };
+    this.commit({ type: "move", from, to });
+    this.render();
+    this.emitStatus();
+  }
+
+  onCancelObjectDrag(): void {
+    this.dragOriginalStroke = null;
+    this.dragStartWorld = null;
+    this.liveTransform = null;
+    this.render();
   }
 
   /** Delete the currently selected stroke as a `delete_object` operation. */
@@ -486,6 +636,33 @@ export class Engine implements Host {
           payload: {},
         });
         break;
+      case "move":
+        envelopes.push({
+          operation_id: crypto.randomUUID(),
+          operation_type: "move_object",
+          base_version: this._serverVersion,
+          payload: {
+            object_id: op.to.id,
+            // Translation is uniform across every point, so the delta
+            // between corresponding points anywhere on the stroke is exact.
+            dx: op.to.points[0].x - op.from.points[0].x,
+            dy: op.to.points[0].y - op.from.points[0].y,
+          },
+        });
+        break;
+      case "resize":
+        envelopes.push({
+          operation_id: crypto.randomUUID(),
+          operation_type: "resize_object",
+          base_version: this._serverVersion,
+          payload: {
+            object_id: op.to.id,
+            anchor: { x: op.anchor.x, y: op.anchor.y },
+            scale_x: op.scaleX,
+            scale_y: op.scaleY,
+          },
+        });
+        break;
     }
 
     for (const envelope of envelopes) {
@@ -496,6 +673,17 @@ export class Engine implements Host {
   }
 
   private render(): void {
+    if (this.liveTransform) {
+      this.renderer.renderWithOverride(
+        this.board,
+        this._viewport,
+        this._size,
+        this.liveTransform.objectId,
+        this.liveTransform.points,
+        this.selectedId,
+      );
+      return;
+    }
     const live = this.liveStroke ? [this.liveStroke.stroke] : [];
     this.renderer.render(this.board, this._viewport, this._size, live, this.selectedId);
   }
@@ -605,6 +793,53 @@ function remoteEnvToOp(env: OperationEnvelope, board: Board): Op | null {
       if (board.strokes.length === 0) return null;
       return { type: "clear", strokes: [...board.strokes] };
     }
+    case "move_object": {
+      const id = payload.object_id;
+      const dx = Number(payload.dx);
+      const dy = Number(payload.dy);
+      if (typeof id !== "string" || !Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+      const target = board.strokes.find((s) => s.id === id);
+      if (!target) return null; // already gone locally -- matches delete_object's no-op convention
+      return {
+        type: "move",
+        from: target,
+        to: { ...target, points: target.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) },
+      };
+    }
+    case "resize_object": {
+      const id = payload.object_id;
+      const anchorRaw = payload.anchor as { x?: unknown; y?: unknown } | undefined;
+      const ax = Number(anchorRaw?.x);
+      const ay = Number(anchorRaw?.y);
+      const sx = Number(payload.scale_x);
+      const sy = Number(payload.scale_y);
+      if (
+        typeof id !== "string" ||
+        !Number.isFinite(ax) ||
+        !Number.isFinite(ay) ||
+        !Number.isFinite(sx) ||
+        !Number.isFinite(sy)
+      ) {
+        return null;
+      }
+      const target = board.strokes.find((s) => s.id === id);
+      if (!target) return null;
+      return {
+        type: "resize",
+        from: target,
+        to: {
+          ...target,
+          points: target.points.map((p) => ({ x: ax + (p.x - ax) * sx, y: ay + (p.y - ay) * sy })),
+        },
+        anchor: { x: ax, y: ay },
+        scaleX: sx,
+        scaleY: sy,
+      };
+    }
+    // "restore_version" is deliberately not handled here — every caller must
+    // recognize it before reaching applyRemoteOperation and trigger a full
+    // state refetch instead (the payload it carries is intentionally
+    // incomplete over the wire; see docs/architecture/whiteboard-history.md).
     default:
       return null;
   }

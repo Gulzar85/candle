@@ -9,7 +9,7 @@ payloads), this middleware provides an explicit, early rejection based on the
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse

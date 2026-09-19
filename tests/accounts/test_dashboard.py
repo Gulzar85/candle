@@ -13,7 +13,6 @@ from django.urls import reverse
 from apps.partnerships.enums import PartnershipMemberStatus, PartnershipRole, PartnershipStatus
 from apps.partnerships.models import Partnership, PartnershipMember
 from apps.whiteboard.models import Whiteboard
-
 from tests.whiteboard.base import make_active_partnership, make_user
 
 from .base import AccountTestCase
@@ -37,8 +36,8 @@ class DashboardTests(AccountTestCase):
         self.client.force_login(self.alice)
         resp = self.client.get(dashboard_url())
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Invite a partner")
-        self.assertContains(resp, "Candle is meant for two.")
+        self.assertContains(resp, "Invite partner")
+        self.assertContains(resp, "Candle is made for two.")
 
     def test_active_partnership_shows_board(self) -> None:
         bobby = make_user("bobby@example.com")

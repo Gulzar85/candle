@@ -17,11 +17,19 @@
       <div class="flex items-center gap-4">
         <div class="flex -space-x-3">
           <div class="rounded-full ring-2 ring-card">
-            {% include "components/avatar.html" with size="lg" tone="primary" initials=user.profile.get_initials name=user.profile.get_display_name %}
+            {% if user.profile.avatar %}
+            {% include "components/avatar.html" with size="lg" image_url=user.profile.avatar.url name=user.profile.get_display_name %}
+            {% else %}
+            {% include "components/avatar.html" with size="lg" initials=user.profile.get_initials name=user.profile.get_display_name accent_color=user.profile.accent_color %}
+            {% endif %}
           </div>
           {% if partner %}
           <div class="rounded-full ring-2 ring-card">
-            {% include "components/avatar.html" with size="lg" initials=partner.profile.get_initials name=partner.profile.get_display_name %}
+            {% if partner.profile.avatar %}
+            {% include "components/avatar.html" with size="lg" image_url=partner.profile.avatar.url name=partner.profile.get_display_name %}
+            {% else %}
+            {% include "components/avatar.html" with size="lg" initials=partner.profile.get_initials name=partner.profile.get_display_name accent_color=partner.profile.accent_color %}
+            {% endif %}
           </div>
           {% endif %}
         </div>

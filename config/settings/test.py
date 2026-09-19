@@ -17,7 +17,7 @@ ALLOWED_HOSTS = ["testserver"]
 CSRF_TRUSTED_ORIGINS = ["https://testserver"]
 
 SECURE_SSL_REDIRECT = False  # Test client doesn't do TLS.
-SECURE_PROXY_SSL_HEADER = None  # type: ignore[assignment]
+SECURE_PROXY_SSL_HEADER = None
 
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
@@ -35,3 +35,9 @@ SECURE_BROWSER_XSS_FILTER = True
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024  # 5 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+# Fast password hasher for test suite speed.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.MD5PasswordHasher",
+]
+

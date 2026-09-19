@@ -30,9 +30,10 @@ from rest_framework.views import APIView
 # --- rate limiting -----------------------------------------------------------
 from apps.accounts import ratelimit as rl
 from apps.accounts.models import User
-from apps.partnerships.policies import can_access_whiteboard
+from apps.partnerships.policies import can_access_whiteboard, safe_display_name
 
-from . import selectors
+from . import history, realtime_signals, selectors
+from .board_import import ImportService
 from .errors import (
     InvalidOperationError,
     RateLimitedError,
@@ -40,6 +41,7 @@ from .errors import (
 )
 from .limits import MAX_BATCH_OPERATIONS
 from .models import Whiteboard
+from .restore import RestoreService
 from .service import WhiteboardMetadataService, WhiteboardOperationService, normalize_batch
 from .validator import OperationValidator
 
@@ -47,6 +49,20 @@ _RATE_SCOPE = "wb_ops"
 _RATE_LIMIT = 60  # operations POSTs per window
 _RATE_WINDOW = 60  # seconds
 _RATE_COOLDOWN = 10  # seconds cooldown after burst
+
+# Restore is rate-limited more tightly than ordinary drawing: it's rare in
+# normal use and comparatively expensive to build (a full historical replay).
+_RESTORE_RATE_SCOPE = "wb_restore"
+_RESTORE_RATE_LIMIT = 10
+_RESTORE_RATE_WINDOW = 60
+_RESTORE_RATE_COOLDOWN = 30
+
+# Import is heavy (up to MAX_IMPORT_OBJECTS strokes) and infrequent by
+# nature -- a tight, coarse limit is appropriate.
+_IMPORT_RATE_SCOPE = "wb_import"
+_IMPORT_RATE_LIMIT = 5
+_IMPORT_RATE_WINDOW = 3600
+_IMPORT_RATE_COOLDOWN = 300
 
 
 def _rate_key(user: User) -> str:
@@ -167,6 +183,32 @@ class OperationSubmitView(APIView):  # type: ignore[misc]  # DRF ships no stubs;
         except WhiteboardAPIError as exc:
             return _error_response(exc)
 
+        # Broadcast every committed operation to the whiteboard group so a
+        # partner on a live WebSocket sees writes that arrived over HTTP (e.g.
+        # while the author's socket was reconnecting). Same post-commit rule and
+        # same envelope as the WebSocket consumer — peers deduplicate by
+        # operation_id, so this is safe even when both transports carry the same
+        # op. Never fails the response if the channel layer is unavailable.
+        actor_public = {
+            "public_id": str(request.user.public_id),
+            "display_name": safe_display_name(request.user),
+        }
+        ops_by_id = {str(op["operation_id"]): op for op in operations}
+        for ack in result.acks:
+            op = ops_by_id.get(ack.operation_id)
+            if op is None:  # pragma: no cover - acks only reference this batch
+                continue
+            realtime_signals.notify_operation_committed(
+                public_id,
+                operation_id=ack.operation_id,
+                sequence=ack.sequence,
+                version=ack.resulting_version,
+                operation_type=op["operation_type"],
+                payload=op.get("payload", {}),
+                actor=actor_public,
+                duplicate=ack.duplicate,
+            )
+
         # Build response.
         acks = [ack.to_dict() for ack in result.acks]
         resp_data: dict[str, Any] = {
@@ -177,6 +219,99 @@ class OperationSubmitView(APIView):  # type: ignore[misc]  # DRF ships no stubs;
 
         # If all were duplicates, still 200 with duplicate:true in each ack.
         return Response(resp_data, status=status.HTTP_200_OK)
+
+
+class WhiteboardRestoreView(APIView):  # type: ignore[misc]  # DRF ships no stubs; APIView is Any
+    """Restore a whiteboard to an earlier point in its own history.
+
+    POST /api/whiteboards/<public_id>/restore/
+    Body: {"operation_id": "...", "base_version": <int>, "target_sequence": <int>}
+
+    This creates a new, forward-moving ``restore_version`` operation through
+    the same locked/versioned/idempotent path as every other operation — it
+    never deletes or rewrites history (see
+    ``docs/architecture/whiteboard-history.md``). On success, every other
+    connection on this board is notified via a lightweight WebSocket
+    broadcast (no snapshot payload — see ``realtime_signals.notify_restore``)
+    so it can refetch full state.
+    """
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, public_id: str) -> Response:
+        rlim = rl.check(
+            _RESTORE_RATE_SCOPE,
+            _rate_key(request.user),
+            _RESTORE_RATE_LIMIT,
+            _RESTORE_RATE_WINDOW,
+            cooldown=_RESTORE_RATE_COOLDOWN,
+        )
+        if rlim.blocked:
+            return _error_response(RateLimitedError(rlim.retry_after))
+
+        try:
+            whiteboard, partnership = _get_whiteboard_and_partnership(request, public_id)
+        except WhiteboardAPIError as exc:
+            return _error_response(exc)
+
+        try:
+            raw_body: Any = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return _error_response(InvalidOperationError("Request body must be valid JSON."))
+
+        if not isinstance(raw_body, dict):
+            return _error_response(InvalidOperationError("Request body must be a JSON object."))
+
+        operation_id = raw_body.get("operation_id")
+        base_version = raw_body.get("base_version")
+        target_sequence = raw_body.get("target_sequence")
+
+        if not isinstance(operation_id, str) or not operation_id:
+            return _error_response(InvalidOperationError("operation_id is required."))
+        if not isinstance(base_version, int) or isinstance(base_version, bool) or base_version < 0:
+            return _error_response(
+                InvalidOperationError("base_version must be a non-negative integer.")
+            )
+        if (
+            not isinstance(target_sequence, int)
+            or isinstance(target_sequence, bool)
+            or target_sequence < 0
+        ):
+            return _error_response(
+                InvalidOperationError("target_sequence must be a non-negative integer.")
+            )
+
+        try:
+            result = RestoreService().restore(
+                whiteboard,
+                request.user,
+                operation_id=operation_id,
+                base_version=base_version,
+                target_sequence=target_sequence,
+            )
+        except WhiteboardAPIError as exc:
+            return _error_response(exc)
+
+        ack = result.acks[0]
+        if not ack.duplicate:
+            realtime_signals.notify_restore(
+                str(partnership.public_id),
+                operation_id=ack.operation_id,
+                sequence=ack.sequence,
+                version=ack.resulting_version,
+                target_sequence=target_sequence,
+                actor={
+                    "public_id": str(request.user.public_id),
+                    "display_name": safe_display_name(request.user),
+                },
+            )
+
+        acks = [ack.to_dict() for ack in result.acks]
+        return Response(
+            {"acks": acks, "version": result.version, "applied": result.applied},
+            status=status.HTTP_200_OK,
+        )
 
 
 class WhiteboardStateView(APIView):  # type: ignore[misc]  # DRF ships no stubs; APIView is Any
@@ -302,6 +437,109 @@ class OperationListView(APIView):  # type: ignore[misc]  # DRF ships no stubs; A
                 "operations": items,
                 "version": whiteboard.version,
                 "count": len(items),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class WhiteboardImportView(APIView):  # type: ignore[misc]  # DRF ships no stubs; APIView is Any
+    """Import a previously-exported JSON board (see ``export-json.ts``).
+
+    POST /api/whiteboards/<public_id>/import/
+    Body: {"schema_version": 1, "objects": [...], "clear_first": bool}
+
+    Imported objects are never inserted into Postgres directly — they are
+    converted into a real, version-chained sequence of ``create_stroke``
+    operations submitted through the same locked/validated path as every
+    other operation (see ``board_import.py``). Additive by default;
+    ``clear_first`` composes the existing ``clear_canvas`` primitive rather
+    than inventing new server-side replace semantics.
+    """
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, public_id: str) -> Response:
+        rlim = rl.check(
+            _IMPORT_RATE_SCOPE,
+            _rate_key(request.user),
+            _IMPORT_RATE_LIMIT,
+            _IMPORT_RATE_WINDOW,
+            cooldown=_IMPORT_RATE_COOLDOWN,
+        )
+        if rlim.blocked:
+            return _error_response(RateLimitedError(rlim.retry_after))
+
+        try:
+            whiteboard, _partnership = _get_whiteboard_and_partnership(request, public_id)
+        except WhiteboardAPIError as exc:
+            return _error_response(exc)
+
+        try:
+            raw_body: Any = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return _error_response(InvalidOperationError("Request body must be valid JSON."))
+
+        clear_first = bool(raw_body.get("clear_first")) if isinstance(raw_body, dict) else False
+
+        try:
+            result = ImportService().import_board(
+                whiteboard, request.user, raw_body, clear_first=clear_first
+            )
+        except WhiteboardAPIError as exc:
+            return _error_response(exc)
+
+        return Response(
+            {"imported": result.imported, "version": result.version},
+            status=status.HTTP_200_OK,
+        )
+
+
+class WhiteboardHistoryView(APIView):  # type: ignore[misc]  # DRF ships no stubs; APIView is Any
+    """Load human-readable history entries for a whiteboard.
+
+    GET /api/whiteboards/<public_id>/history/
+
+    Query parameters:
+        before_sequence: int  — page backward from just before this sequence
+                                 (omitted = start from the current version)
+        limit: int             — max entries to return (default 50, max 200)
+
+    Returns newest-first, humanized entries (see ``history.py``) — never raw
+    operation ids/sequences beyond what's needed to page and to restore.
+    """
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    _DEFAULT_LIMIT = 50
+    _MAX_LIMIT = 200
+
+    def get(self, request: Request, public_id: str) -> Response:
+        try:
+            whiteboard, _partnership = _get_whiteboard_and_partnership(request, public_id)
+        except WhiteboardAPIError as exc:
+            return _error_response(exc)
+
+        before_sequence = _parse_int(request.query_params.get("before_sequence"), default=0)
+        if before_sequence < 0:
+            return _error_response(InvalidOperationError("before_sequence must be non-negative."))
+
+        raw_limit = _parse_int(request.query_params.get("limit"), default=self._DEFAULT_LIMIT)
+        limit = max(1, min(raw_limit, self._MAX_LIMIT))
+
+        entries = history.build_history(
+            whiteboard,
+            request.user,
+            before_sequence=before_sequence or None,
+            limit=limit,
+        )
+
+        return Response(
+            {
+                "entries": [history.entry_to_dict(e) for e in entries],
+                "version": whiteboard.version,
+                "count": len(entries),
             },
             status=status.HTTP_200_OK,
         )

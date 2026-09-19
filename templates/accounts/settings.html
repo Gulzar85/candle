@@ -3,84 +3,138 @@
 {% block content %}
 {% include "components/_messages.html" %}
 
-<div class="px-4 lg:px-6 py-6 max-w-2xl">
+<div class="px-4 lg:px-6 py-6 lg:py-8 max-w-2xl mx-auto">
   <header class="mb-6">
-    <h1 class="text-2xl font-semibold tracking-tight">Account &amp; security</h1>
+    <h1 class="text-2xl font-bold tracking-tight">Account &amp; security</h1>
     <p class="text-sm text-muted-foreground mt-1">Manage your email, password, and session.</p>
   </header>
 
-  <div class="space-y-6">
+  <div class="space-y-5">
     {# Email #}
-    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="email-heading">
-      <h2 id="email-heading" class="font-semibold mb-4">Email address</h2>
-      <div class="flex items-center justify-between gap-4 mb-4">
+    <section class="card card-pad" aria-labelledby="email-heading">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10 text-primary shrink-0">
+          <i data-lucide="mail" class="w-4 h-4" aria-hidden="true"></i>
+        </div>
+        <h2 id="email-heading" class="font-semibold">Email address</h2>
+      </div>
+
+      <div class="flex items-center justify-between gap-4 mb-4 pl-12">
         <div>
           <p class="text-sm font-medium">{{ user.email }}</p>
-          <p class="text-xs text-muted-foreground">
+          <p class="text-xs text-muted-foreground mt-0.5">
             {% if user.email_verified %}
-            <span class="inline-flex items-center gap-1 text-success"><i data-lucide="badge-check" class="w-3.5 h-3.5" aria-hidden="true"></i> Verified</span>
+            {% include "components/badge.html" with label="Verified" variant="success" %}
             {% else %}
-            <span class="inline-flex items-center gap-1 text-warning"><i data-lucide="alert-triangle" class="w-3.5 h-3.5" aria-hidden="true"></i> Not verified</span>
+            {% include "components/badge.html" with label="Not verified" variant="warning" %}
             {% endif %}
           </p>
         </div>
       </div>
       {% if user.email_pending %}
-      <div class="rounded-lg bg-muted p-3 text-sm text-muted-foreground mb-4">
-        A confirmation link will be sent to <span class="font-medium text-foreground">{{ user.email_pending }}</span>.
+      <div class="ml-12 rounded-lg bg-warning/10 border border-warning/20 p-3 text-sm text-muted-foreground mb-4 flex items-start gap-2">
+        <i data-lucide="clock" class="w-4 h-4 text-warning shrink-0 mt-0.5" aria-hidden="true"></i>
+        <span>A confirmation link will be sent to <span class="font-medium text-foreground">{{ user.email_pending }}</span>.</span>
       </div>
       {% endif %}
-      <form method="post" action="{% url 'accounts:email_change_request' %}" novalidate>
+      <form method="post" action="{% url 'accounts:email_change_request' %}" novalidate class="pl-12">
         {% csrf_token %}
         <div class="space-y-3">
           {% if email_change_form %}
             {% include "accounts/_field.html" with field=email_change_form.new_email %}
           {% endif %}
-          <button type="submit"
-                  class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+          <button type="submit" class="btn-outline">
+            <i data-lucide="send" class="w-4 h-4" aria-hidden="true"></i>
             Change email
           </button>
         </div>
       </form>
     </section>
 
+    {# Appearance #}
+    <section class="card card-pad" aria-labelledby="appearance-heading"
+              x-data="{ mode: window.__theme.getMode() }">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-secondary text-secondary-foreground shrink-0">
+          <i data-lucide="palette" class="w-4 h-4" aria-hidden="true"></i>
+        </div>
+        <h2 id="appearance-heading" class="font-semibold">Appearance</h2>
+      </div>
+      <div class="pl-12">
+        <p class="text-sm text-muted-foreground mb-3" id="theme-label">Theme</p>
+        <div class="inline-flex rounded-lg border border-input p-1 gap-1" role="radiogroup" aria-labelledby="theme-label">
+          <button type="button"
+                  @click="mode = 'system'; window.__theme.setMode('system')"
+                  :class="mode === 'system' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  role="radio" :aria-checked="mode === 'system'"
+                  class="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium min-h-[40px] transition-colors">
+            <i data-lucide="monitor" class="w-4 h-4" aria-hidden="true"></i> System
+          </button>
+          <button type="button"
+                  @click="mode = 'light'; window.__theme.setMode('light')"
+                  :class="mode === 'light' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  role="radio" :aria-checked="mode === 'light'"
+                  class="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium min-h-[40px] transition-colors">
+            <i data-lucide="sun" class="w-4 h-4" aria-hidden="true"></i> Light
+          </button>
+          <button type="button"
+                  @click="mode = 'dark'; window.__theme.setMode('dark')"
+                  :class="mode === 'dark' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  role="radio" :aria-checked="mode === 'dark'"
+                  class="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium min-h-[40px] transition-colors">
+            <i data-lucide="moon" class="w-4 h-4" aria-hidden="true"></i> Dark
+          </button>
+        </div>
+        <p class="text-xs text-muted-foreground mt-3">"System" follows your device's setting automatically.</p>
+      </div>
+    </section>
+
     {# Security #}
-    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="security-heading">
-      <h2 id="security-heading" class="font-semibold mb-4">Security</h2>
-      <div class="flex items-center justify-between gap-4">
+    <section class="card card-pad" aria-labelledby="security-heading">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-accent/10 text-accent shrink-0">
+          <i data-lucide="key-round" class="w-4 h-4" aria-hidden="true"></i>
+        </div>
+        <h2 id="security-heading" class="font-semibold">Security</h2>
+      </div>
+      <div class="flex items-center justify-between gap-4 pl-12">
         <div>
           <p class="text-sm font-medium">Password</p>
           <p class="text-xs text-muted-foreground">Last changed via a secure reset or change flow.</p>
         </div>
-        <a href="{% url 'accounts:password_change' %}"
-           class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
+        <a href="{% url 'accounts:password_change' %}" class="btn-outline shrink-0">
           Change password
         </a>
       </div>
     </section>
 
     {# Session #}
-    <section class="bg-card border border-border rounded-xl p-6" aria-labelledby="session-heading">
-      <h2 id="session-heading" class="font-semibold mb-4">Session</h2>
-      <div class="flex flex-wrap items-center gap-3">
-        <form method="post" action="{% url 'accounts:logout' %}" novalidate>
-          {% csrf_token %}
-          <button type="submit"
-                  class="inline-flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 py-2.5 text-sm font-medium min-h-[44px] text-foreground transition-colors hover:bg-muted">
-            <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i>
-            Sign out
-          </button>
-        </form>
-        <form method="post" action="{% url 'accounts:logout_all_devices' %}" novalidate>
-          {% csrf_token %}
-          <button type="submit"
-                  class="inline-flex items-center justify-center gap-2 rounded-lg bg-danger text-danger-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-danger/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-            <i data-lucide="shield" class="w-4 h-4" aria-hidden="true"></i>
-            Sign out everywhere
-          </button>
-        </form>
+    <section class="card card-pad" aria-labelledby="session-heading">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-warning/10 text-warning shrink-0">
+          <i data-lucide="monitor-smartphone" class="w-4 h-4" aria-hidden="true"></i>
+        </div>
+        <h2 id="session-heading" class="font-semibold">Session</h2>
       </div>
-      <p class="text-xs text-muted-foreground mt-3">Sign out of this browser only, or from every device and browser at once.</p>
+      <div class="pl-12">
+        <div class="flex flex-wrap items-center gap-3">
+          <form method="post" action="{% url 'accounts:logout' %}" novalidate>
+            {% csrf_token %}
+            <button type="submit" class="btn-outline">
+              <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i>
+              Sign out
+            </button>
+          </form>
+          <form method="post" action="{% url 'accounts:logout_all_devices' %}" novalidate>
+            {% csrf_token %}
+            <button type="submit" class="btn-danger">
+              <i data-lucide="shield-alert" class="w-4 h-4" aria-hidden="true"></i>
+              Sign out everywhere
+            </button>
+          </form>
+        </div>
+        <p class="text-xs text-muted-foreground mt-3">Sign out of this browser only, or from every device and browser at once.</p>
+      </div>
     </section>
   </div>
 </div>

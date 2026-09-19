@@ -47,8 +47,17 @@ export function invertOp(op: Op): Op {
       return { type: "add", strokes: op.strokes };
     case "clear":
       return { type: "add", strokes: op.strokes };
-    default:
-      return op;
+    case "move":
+      return { type: "move", from: op.to, to: op.from };
+    case "resize":
+      return {
+        type: "resize",
+        from: op.to,
+        to: op.from,
+        anchor: op.anchor,
+        scaleX: 1 / op.scaleX,
+        scaleY: 1 / op.scaleY,
+      };
   }
 }
 
@@ -66,6 +75,9 @@ function nextStrokes(strokes: readonly Stroke[], op: Op): readonly Stroke[] {
     }
     case "clear":
       return [];
+    case "move":
+    case "resize":
+      return strokes.map((s) => (s.id === op.to.id ? op.to : s));
   }
 }
 

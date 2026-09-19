@@ -127,7 +127,17 @@ export class SyncManager {
 
       this._serverVersion = serverVersion;
       this._localVersion = serverVersion;
+      // The engine's own counter starts at 0; without seeding it here, the
+      // first operation of a fresh session is wrongly rebased to version 0
+      // and rejected as stale (see SyncEngine.seedServerVersion).
+      this.syncEngine.seedServerVersion(serverVersion);
+      // Reconcile any quarantined history from earlier sessions on reopen.
+      // Idempotent by operation_id — op already applied on the server comes
+      // back as a duplicate ack, only genuinely unsafe ones stay quarantined.
+      const healed = await this.syncEngine.requeueConflicts();
       if (recovered > 0) {
+        this._saveStatus = "pending";
+      } else if (healed > 0) {
         this._saveStatus = "pending";
       }
       await this.syncEngine.refreshPendingCount();
@@ -162,11 +172,19 @@ export class SyncManager {
   /**
    * Enqueue an operation for durable persistence + submission. The operation
    * is written to IndexedDB before submission is attempted.
+   *
+   * ``pushHttp`` — when false, the durable queue write happens but the HTTP
+   * sync pass is deferred; the operation is expected to be acknowledged over
+   * the live WebSocket (see RealtimeController), which marks it confirmed.
    */
-  enqueue(op: OperationEnvelope): void {
+  enqueue(op: OperationEnvelope, pushHttp = true): void {
     this._localVersion++;
     if (this.syncEngine && this._ready) {
-      void this.syncEngine.submit(op, this._serverVersion).then((ok) => {
+      // Pass the LIVE version (the realtime controller's, once wired) so the
+      // durable record's base_version is never a stale snapshot, and only
+      // schedule the HTTP leg when this operation is NOT already on its way
+      // over the WebSocket.
+      void this.syncEngine.submit(op, this.serverVersion, pushHttp).then((ok) => {
         if (!ok) this._setStatus("error");
       });
     } else {
@@ -176,6 +194,26 @@ export class SyncManager {
       this._setStatus("pending");
       void this.submitHttpLegacy(op);
     }
+  }
+
+  /** Notify the sync engine that an operation was committed via WebSocket. */
+  markOperationConfirmed(operationId: string, serverVersion: number): void {
+    void this.syncEngine?.markOperationConfirmed(operationId, serverVersion);
+  }
+
+  /**
+   * Feed the sync engine a live server-version source (e.g. the realtime
+   * controller's confirmed version) so its reconciliation never judges fresh
+   * operations against a stale baseline. When the getter returns ``null`` the
+   * engine falls back to its own seeded/tracked baseline.
+   */
+  setServerVersionGetter(getter: () => number | null): void {
+    const engine = this.syncEngine;
+    if (!engine) return;
+    engine.setServerVersionGetter(() => {
+      const live = getter();
+      return live !== null ? live : engine.internalServerVersion;
+    });
   }
 
   /** Retry all pending operations (calls the sync engine). */
@@ -189,6 +227,17 @@ export class SyncManager {
     } else {
       this._setStatus("pending");
     }
+  }
+
+  /**
+   * Requeue every quarantined conflict as pending and retry. Unlike
+   * ``retryPending``, this also reaches operations already set aside as
+   * CONFLICT — the only way those are ever resubmitted.
+   */
+  async resolveConflicts(): Promise<void> {
+    if (!this.syncEngine) return;
+    this._setStatus("pending");
+    await this.syncEngine.resolveAllConflicts();
   }
 
   destroy(): void {
@@ -221,10 +270,6 @@ export class SyncManager {
         break;
       case "pending":
         this._saveStatus = "pending";
-        break;
-      case "conflict":
-        this._saveStatus = "error";
-        this._lastError = "Some changes need attention.";
         break;
       case "error":
         this._saveStatus = "error";

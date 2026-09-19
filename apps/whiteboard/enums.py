@@ -39,6 +39,12 @@ class WhiteboardOperationType(models.TextChoices):
       keeps erase auditable and composable).
     * ``CLEAR_CANVAS`` — clear the whole board (a logical operation, never
       "delete every row").
+    * ``MOVE_OBJECT`` — translate one object by a relative ``(dx, dy)``.
+    * ``RESIZE_OBJECT`` — scale one object's points from a fixed anchor.
+    * ``RESTORE_VERSION`` — reset board state to an earlier point in this
+      same append-only history (a logical operation, like ``CLEAR_CANVAS``;
+      it never deletes or rewrites prior rows — see
+      ``docs/architecture/whiteboard-history.md``).
 
     The set is kept minimal and open-ended: future types (text/shape/undo,
     collaborative erase-as-undo) are **appended**, never renamed, because
@@ -48,3 +54,6 @@ class WhiteboardOperationType(models.TextChoices):
     CREATE_STROKE = "create_stroke", "Create stroke"
     DELETE_OBJECT = "delete_object", "Delete object"
     CLEAR_CANVAS = "clear_canvas", "Clear canvas"
+    MOVE_OBJECT = "move_object", "Move object"
+    RESIZE_OBJECT = "resize_object", "Resize object"
+    RESTORE_VERSION = "restore_version", "Restore version"

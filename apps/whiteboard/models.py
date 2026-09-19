@@ -22,8 +22,6 @@ from apps.partnerships.models import Partnership
 
 from .enums import WhiteboardOperationType, WhiteboardStatus
 
-MAX_PAYLOAD_BYTES = 200_000
-
 
 class Whiteboard(models.Model):
     """A shared drawing surface belonging to one, well-defined partnership.
@@ -61,7 +59,6 @@ class Whiteboard(models.Model):
         max_length=16,
         choices=WhiteboardStatus.choices,
         default=WhiteboardStatus.ACTIVE,
-        db_index=True,
     )
     version = models.PositiveBigIntegerField(default=0, editable=False)
     last_operation_at = models.DateTimeField(null=True, blank=True, editable=False)
@@ -148,7 +145,12 @@ class WhiteboardOperation(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=["whiteboard", "sequence"], name="idx_op_board_seq"),
+            # No explicit (whiteboard, sequence) index here: the
+            # uniq_op_sequence_per_board UniqueConstraint above already
+            # creates one covering exactly that query pattern (ORDER BY
+            # sequence WHERE whiteboard_id = X for replay) — a second,
+            # non-unique index on the same leading columns would only add
+            # write overhead with zero read benefit.
             models.Index(fields=["whiteboard", "operation_type"], name="idx_op_board_type"),
             models.Index(fields=["whiteboard", "created_at"], name="idx_op_board_created"),
         ]

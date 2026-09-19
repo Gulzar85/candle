@@ -73,6 +73,20 @@ def get_whiteboard_state(whiteboard: Whiteboard) -> ReconstructedState:
     return reconstruct_state(ops)
 
 
+def reconstruct_state_at(whiteboard: Whiteboard, target_sequence: int) -> ReconstructedState:
+    """Reconstruct object state as of a specific historical sequence number.
+
+    Correct regardless of concurrent activity: operation rows are immutable
+    and append-only, so "state at sequence N" never changes once N has been
+    reached, no matter what happens to the board afterward. Used by
+    ``restore.RestoreService`` to build a RESTORE_VERSION snapshot.
+    """
+    ops = WhiteboardOperation.objects.filter(
+        whiteboard=whiteboard, sequence__lte=target_sequence
+    ).order_by("sequence")
+    return reconstruct_state(ops)
+
+
 def operation_to_dict(op: WhiteboardOperationType) -> dict[str, Any]:
     """Serialize a single operation for API responses.
 

@@ -88,6 +88,23 @@ Close codes (application-level, IANA-retired 4xxx range):
 `ServerOperation` = `{operation_id, sequence, operation_type, base_version,
 resulting_version, payload}`.
 
+### Phase 9: `restore_version` broadcasts a lightweight payload
+
+A completed restore (submitted via the separate `POST .../restore/` HTTP
+endpoint, never over this WebSocket) is announced to the group via the
+same `operation.committed` envelope shape, but its `operation.payload` is
+deliberately **stripped down to `{"target_sequence": N}`** — the full
+snapshot (`objects`) is never put on the wire, since a real restore
+snapshot can run into the hundreds of KB to multiple MB (see
+`docs/performance/phase-9-benchmarks.md`), comfortably exceeding
+`MAX_MESSAGE_BYTES` below. **Every client that receives an
+`operation.committed` (or a `sync.ops` entry) with `operation_type ===
+"restore_version"` must do a full `GET /api/whiteboards/<id>/` refetch
+instead of trying to apply the payload** — see
+`docs/architecture/whiteboard-history.md` for the full design and why this
+is safe (operation rows are immutable, so "state as of sequence N" is
+always correctly recomputable from scratch).
+
 ---
 
 ## Error codes

@@ -13,10 +13,34 @@ Replay semantics per operation:
 * ``DELETE_OBJECT``  -> remove that ``object_id``.
 * ``CLEAR_CANVAS``   -> empty all objects (a logical operation, never a
   per-row delete of history).
+* ``MOVE_OBJECT``    -> translate one object's points by ``(dx, dy)``.
+  Z-order is left unchanged (unlike ``CREATE_STROKE``'s recreate-moves-to-top
+  behavior — moving an object shouldn't bring it to the front).
+* ``RESIZE_OBJECT``  -> scale one object's points from a fixed anchor. Stroke
+  width does not scale (geometry changes, thickness doesn't). Z-order is
+  left unchanged, same reasoning as ``MOVE_OBJECT``.
+* ``RESTORE_VERSION`` -> reset all objects/order to a server-computed snapshot
+  embedded in the payload (a logical operation, like ``CLEAR_CANVAS`` — it
+  never deletes or rewrites prior history rows; see
+  ``docs/architecture/whiteboard-history.md``).
 
 Phase 4 keeps snapshots out (see ``whiteboard-persistence.md`` for the measured
 threshold that would justify them). The service is written so a snapshot-start
-basis can be added later without changing its API.
+basis can be added later without changing its API. Phase 9's ``RESTORE_VERSION``
+reuses this exact ``start=`` seam for a product reason (letting a user view/
+restore history), not as the performance-driven snapshotting that doc
+describes — see ``docs/architecture/phase-9-audit.md`` for why those two
+motivations are distinct and the performance question remains open.
+
+``MOVE_OBJECT``/``RESIZE_OBJECT`` are the first operation types that patch a
+subset of an existing object's fields rather than replacing or removing it
+wholesale. This matters because ``replay(..., start=...)`` copies ``start``
+shallowly (``dict(start.objects)`` — the per-object dicts themselves are
+shared references). Every other operation type is safe against this because
+none of them ever mutate an existing object dict's fields in place. The two
+mutation branches below always rebind a **new** dict
+(``state.objects[oid] = {**obj, ...}``) rather than mutating ``obj`` in
+place, specifically to preserve the "``start`` is not mutated" contract.
 """
 
 from __future__ import annotations
@@ -76,6 +100,31 @@ class WhiteboardStateBuilder:
         elif op_type == WhiteboardOperationType.CLEAR_CANVAS:
             state.objects.clear()
             state.order.clear()
+        elif op_type == WhiteboardOperationType.MOVE_OBJECT:
+            existing = state.objects.get(payload["object_id"])
+            if existing is None:
+                return  # Object no longer exists (e.g. deleted concurrently) — no-op.
+            dx, dy = payload["dx"], payload["dy"]
+            state.objects[existing["object_id"]] = {
+                **existing,
+                "points": [{"x": p["x"] + dx, "y": p["y"] + dy} for p in existing["points"]],
+            }
+        elif op_type == WhiteboardOperationType.RESIZE_OBJECT:
+            existing = state.objects.get(payload["object_id"])
+            if existing is None:
+                return
+            ax, ay = payload["anchor"]["x"], payload["anchor"]["y"]
+            sx, sy = payload["scale_x"], payload["scale_y"]
+            state.objects[existing["object_id"]] = {
+                **existing,
+                "points": [
+                    {"x": ax + (p["x"] - ax) * sx, "y": ay + (p["y"] - ay) * sy}
+                    for p in existing["points"]
+                ],
+            }
+        elif op_type == WhiteboardOperationType.RESTORE_VERSION:
+            state.objects = {o["object_id"]: dict(o) for o in payload["objects"]}
+            state.order = [o["object_id"] for o in payload["objects"]]
         else:  # pragma: no cover - validator blocks unknown types
             raise InvalidOperationError(f"Unknown operation type: {op_type!r}")
 

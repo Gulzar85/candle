@@ -65,4 +65,17 @@ export interface Size {
 export type Op =
   | { readonly type: "add"; readonly strokes: readonly Stroke[] }
   | { readonly type: "remove"; readonly strokes: readonly Stroke[] }
-  | { readonly type: "clear"; readonly strokes: readonly Stroke[] };
+  | { readonly type: "clear"; readonly strokes: readonly Stroke[] }
+  /** Translate one stroke. Carries the concrete before/after stroke (not a
+   * delta) so it inverts exactly, matching every other Op's principle. */
+  | { readonly type: "move"; readonly from: Stroke; readonly to: Stroke }
+  /** Scale one stroke's points from a fixed anchor. Width is never scaled
+   * (geometry changes, thickness doesn't). */
+  | {
+      readonly type: "resize";
+      readonly from: Stroke;
+      readonly to: Stroke;
+      readonly anchor: Point;
+      readonly scaleX: number;
+      readonly scaleY: number;
+    };

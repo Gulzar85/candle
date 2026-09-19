@@ -8,7 +8,8 @@
 {% else %}
 <div
   aria-label="{{ name }}"
-  class="avatar {% if tone == 'primary' %}bg-primary text-primary-foreground{% endif %} {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
+  class="avatar {% if not accent_color and tone == 'primary' %}bg-primary text-primary-foreground{% endif %} {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
+  {% if accent_color %}style="background-color: {{ accent_color }}; color: #fff;"{% endif %}
 >
   {% if initials %}
   {{ initials }}

@@ -1,5 +1,7 @@
 from .base import *  # noqa: F401, F403
 
+import os  # noqa: E402
+
 DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
@@ -31,12 +33,13 @@ CHANNEL_LAYERS = {
     }
 }
 
-# Local WebSocket origins: the Vite dev server and the Django dev server.
+# Local WebSocket origins: default to every origin so device/LAN testing (two
+# machines reaching a dev box by IP) is not silently degraded to HTTP-only —
+# the consumer treats "*" as "allow any" and only production forbids it (its
+# allowlist is required and never "*"). Set WEBSOCKET_ALLOWED_ORIGINS to pin
+# explicit origins in dev.
 WEBSOCKET_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
+    o.strip() for o in os.environ.get("WEBSOCKET_ALLOWED_ORIGINS", "*").split(",") if o.strip()
 ]
 
 # Development always sends email to the console, regardless of environment values.

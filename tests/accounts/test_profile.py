@@ -29,6 +29,9 @@ class ProfileTest(AccountTestCase):
             "/accounts/profile/",
             {
                 "display_name": "Bobby Tables",
+                "pronouns": "he/him",
+                "bio": "Loves whiteboards.",
+                "accent_color": "#dc2626",
                 "timezone": "Europe/Paris",
                 "locale": "fr",
             },
@@ -36,6 +39,9 @@ class ProfileTest(AccountTestCase):
         self.assertRedirects(response, "/accounts/profile/", fetch_redirect_response=False)
         self.user.profile.refresh_from_db()
         self.assertEqual(self.user.profile.display_name, "Bobby Tables")
+        self.assertEqual(self.user.profile.pronouns, "he/him")
+        self.assertEqual(self.user.profile.bio, "Loves whiteboards.")
+        self.assertEqual(self.user.profile.accent_color, "#dc2626")
         self.assertEqual(self.user.profile.timezone, "Europe/Paris")
         self.assertEqual(self.user.profile.locale, "fr")
 

@@ -18,7 +18,8 @@ urlpatterns = [
     path("", include("apps.core.urls")),
 ]
 
-# Serve user-uploaded media in development only; production uses WhiteNoise and
-# a reverse proxy for /media/.
+# Serve user-uploaded media in development only. WhiteNoise (STORAGES override
+# in production.py) only serves STATIC_URL, never MEDIA_URL; production must
+# put a reverse proxy (nginx, etc.) in front of MEDIA_ROOT for /media/.
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

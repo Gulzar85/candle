@@ -15,7 +15,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
 from .avatars import process_avatar, validate_upload_size
-from .models import Profile, User
+from .models import ACCENT_COLOR_CHOICES, Profile, User
 
 COMMON_TIMEZONES = [
     "UTC",
@@ -143,11 +143,23 @@ class EmailChangeRequestForm(forms.Form):
 
 
 class ProfileForm(forms.ModelForm):
+    accent_color = forms.ChoiceField(
+        choices=[(c, c) for c in ACCENT_COLOR_CHOICES],
+        widget=forms.RadioSelect,
+        label="Identity color",
+    )
+
     class Meta:
         model = Profile
-        fields = ["display_name", "timezone", "locale"]
+        fields = ["display_name", "pronouns", "bio", "accent_color", "timezone", "locale"]
         widgets = {
             "display_name": forms.TextInput(attrs={"autocomplete": "name"}),
+            "pronouns": forms.TextInput(
+                attrs={"autocomplete": "off", "placeholder": "e.g. she/her"}
+            ),
+            "bio": forms.Textarea(
+                attrs={"rows": 2, "maxlength": 280, "placeholder": "A short line about you"}
+            ),
             "timezone": forms.Select(choices=[(tz, tz) for tz in COMMON_TIMEZONES]),
             "locale": forms.Select(
                 choices=[("en", "English"), ("fr", "French"), ("es", "Spanish")]

@@ -37,17 +37,20 @@ the connection as offline:
 Strokes you make offline still replay immediately onto your canvas, so you can
 keep working.
 
-## Conflict (409 → quarantine)
+## Sync errors (no conflict panel)
 
-A **409 Conflict** means an operation was submitted against a stale baseline
-(another edit advanced the board). The engine does **not** silently drop it:
+Candle does **not** show a "conflict" panel. Offline work is pushed against the
+newest server version, so a stale baseline is impossible by construction; if a
+partner's edit races ahead mid-submit, the engine re-anchors and retries
+automatically. Genuinely rejected operations (e.g. access revoked, board
+archived) surface only as a save error in the status bar — never a blocking
+review flow:
 
-- Affected operations are quarantined and a "Some changes need attention" panel
-  appears.
-- **Review** re-syncs and retries from the durable queue when possible; it never
-  discards data.
-- Reopening the board reconciles quarantined history idempotently by
-  `operation_id`.
+- The error names the remedy (Retry) rather than just what failed.
+- Nothing is silently dropped: permanently rejected operations stay preserved as
+  `FAILED` until a retry succeeds against fresh state.
+- Reopening the board heals any quarantined rows left by older builds idempotently
+  by `operation_id`.
 
 ## Realtime connection states
 
@@ -67,4 +70,4 @@ and are never persisted.
 
 - Never claim success while unsure ("Saved" only when acked).
 - Destructive actions (clear board) always confirm.
-- Error states name the remedy (Retry, Review) rather than just what failed.
+- Error states name the remedy (Retry) rather than just what failed.

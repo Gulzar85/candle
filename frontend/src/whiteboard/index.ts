@@ -15,6 +15,9 @@
 
 import { Engine } from "./engine";
 import type { StatusInfo } from "./engine";
+import { downloadBlob, strokesToPngBlob } from "./export-png";
+import { exportToJsonBlob } from "./export-json";
+import { HistoryPanel } from "./history";
 import { WhiteboardRepository } from "./repository";
 import type { SaveStatus, SyncState } from "./sync";
 import { SyncManager } from "./sync";
@@ -33,6 +36,8 @@ let engine: Engine | null = null;
 let sync: SyncManager | null = null;
 let realtime: RealtimeController | null = null;
 let transport: WebSocketTransport | null = null;
+let repository: WhiteboardRepository | null = null;
+let isOnline = false;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,17 +152,6 @@ function renderSaveStatus(state: SyncState): void {
   } else {
     retryBtn.classList.add("hidden");
   }
-
-  // Conflict panel: visible when conflicting ops are quarantined.
-  const conflictPanel = document.getElementById("wb-conflict-panel");
-  const conflictCount = (state as { conflictCount?: number }).conflictCount ?? 0;
-  if (conflictPanel) {
-    if (conflictCount > 0) {
-      conflictPanel.classList.remove("hidden");
-    } else {
-      conflictPanel.classList.add("hidden");
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +177,7 @@ function renderRealtimeState(state: RealTimeConnectionState): void {
 
 const presenceUsers = new Set<string>();
 const presenceCursors = new Map<string, HTMLDivElement>();
+let partnerId: string | undefined;
 
 function buildCursorEl(initials: string): HTMLDivElement {
   const node = document.createElement("div");
@@ -195,6 +190,18 @@ function buildCursorEl(initials: string): HTMLDivElement {
   return node;
 }
 
+/** Toggle the toolbar's partner avatar between "online" and "offline". */
+function setPartnerPresence(online: boolean): void {
+  const avatar = document.getElementById("wb-presence-partner");
+  const dot = document.getElementById("wb-presence-partner-dot");
+  if (!avatar || !dot) return;
+  avatar.classList.toggle("opacity-40", !online);
+  dot.classList.toggle("bg-success", online);
+  dot.classList.toggle("bg-muted-foreground", !online);
+  const label = avatar.getAttribute("title") ?? "";
+  avatar.setAttribute("title", label.replace(/\((online|offline)\)/, `(${online ? "online" : "offline"})`));
+}
+
 function onPresence(message: PresenceJoined | PresenceLeft | PresenceUpdate): void {
   const stage = document.getElementById("wb-stage");
   if (!stage) return;
@@ -205,10 +212,12 @@ function onPresence(message: PresenceJoined | PresenceLeft | PresenceUpdate): vo
       stage.appendChild(cursor);
       presenceCursors.set(message.user.public_id, cursor);
     }
+    if (partnerId && message.user.public_id === partnerId) setPartnerPresence(true);
   } else if (message.type === "presence.left") {
     presenceUsers.delete(message.user.public_id);
     presenceCursors.get(message.user.public_id)?.remove();
     presenceCursors.delete(message.user.public_id);
+    if (partnerId && message.user.public_id === partnerId) setPartnerPresence(false);
   } else if (message.type === "presence.update") {
     // Cursor moves are frequent; only move the dot, never re-render the
     // realtime-state label (its "N online" count doesn't change here).
@@ -220,6 +229,46 @@ function onPresence(message: PresenceJoined | PresenceLeft | PresenceUpdate): vo
     return;
   }
   renderRealtimeState(realtime?.state ?? "connecting");
+}
+
+// ---------------------------------------------------------------------------
+// Full state (re)load
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current server state and replace the local board entirely.
+ *
+ * Used at initial page load (`alwaysApply=false` — an empty response there
+ * just means "nothing to show yet"; any cached board stays as-is) and
+ * whenever a restore is observed, ours or a partner's (`alwaysApply=true` —
+ * a restore to an empty board is a real, valid state that must actually
+ * clear the canvas, not be treated as "no data").
+ *
+ * Restore payloads are deliberately incomplete over the wire (see
+ * docs/architecture/whiteboard-history.md) — every observer resolves a
+ * restore with a full refetch through this same path rather than trying to
+ * apply the operation locally.
+ */
+async function loadFullState(
+  repo: WhiteboardRepository,
+  instance: Engine,
+  syncMgr: SyncManager,
+  fallbackVersion: number,
+  alwaysApply: boolean = false,
+): Promise<void> {
+  try {
+    const data = await repo.loadState();
+    if (data.objects.length > 0 || alwaysApply) {
+      const strokes = data.objects.map((obj) => WhiteboardRepository.serverObjectToStroke(obj));
+      instance.loadServerState(strokes);
+      instance.setServerVersion(data.version);
+      void syncMgr.cacheWhiteboard(data.version ?? fallbackVersion, strokes);
+    }
+  } catch {
+    // Offline or failed — keep whatever's currently shown. The sync engine
+    // handles reconnection; a restore notification the client couldn't
+    // fetch will be caught up on the next successful sync.ops exchange.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -242,18 +291,22 @@ function mount(
   // Set up the offline-first persistence layer. The SyncManager is constructed
   // with the whiteboard + account identity so its IndexedDB usage is scoped.
   const repo = new WhiteboardRepository(apiBase || "/api/whiteboards/unknown");
+  repository = repo;
   const syncMgr = new SyncManager(repo, publicId || undefined, ownerKey || "anonymous");
 
   // Submit a locally-committed operation.
   //
-  // Phase 6: every operation is durably persisted by the SyncManager first.
-  // When the WebSocket is live we ALSO submit over the wire for low-latency
-  // delivery; the server's operation_id idempotency guarantees the result is
-  // just one committed operation. When offline, only the durable queue runs.
+  // Phase 6 + 5: every operation is durably persisted by the SyncManager first
+  // (crash safety). When the WebSocket is live we submit ONLY over the wire for
+  // low-latency delivery — the durable record is deferred, not duplicated over
+  // HTTP, and the server ack marks it confirmed in the queue. When offline only
+  // the durable queue runs over HTTP. The server's operation_id idempotency
+  // remains the final safety net for any pre-existing duplicates.
   const submitLocal = (op: OperationEnvelope): void => {
-    syncMgr.enqueue(op);
-    if (realtime?.state === "ready") {
-      realtime.submitOperation(op);
+    const live = realtime?.state === "ready";
+    syncMgr.enqueue(op, !live);
+    if (live) {
+      realtime?.submitOperation(op);
     }
   };
 
@@ -273,18 +326,6 @@ function mount(
   // Wire save status updates.
   syncMgr.onStatusChange(renderSaveStatus);
 
-  // Show a "needs attention" panel when operations are quarantined as
-  // conflicts. Clicking Review re-syncs and (if the store is able) retries
-  // from the durable queue; it never silently discards data.
-  const conflictPanel = document.getElementById("wb-conflict-panel");
-  const conflictReview = document.getElementById("wb-conflict-review");
-  if (conflictPanel && conflictReview) {
-    conflictReview.addEventListener("click", () => {
-      syncMgr.retryPending();
-      conflictPanel.classList.add("hidden");
-    });
-  }
-
   // Realtime collaboration over WebSocket (Phase 5).
   let controller: RealtimeController | null = null;
   let wsTransport: WebSocketTransport | null = null;
@@ -293,7 +334,22 @@ function mount(
     transport = wsTransport;
     controller = new RealtimeController({
       transport: wsTransport,
-      onApplyRemote: (env) => instance.applyRemoteOperation(env),
+      onApplyRemote: (env) => {
+        // A restore's payload is deliberately incomplete over the wire
+        // (see loadFullState's docstring) — every observer, live broadcast
+        // or reconnect catch-up alike, resolves it with a full refetch
+        // instead of trying to apply the operation locally. Both paths in
+        // RealtimeController funnel through this one callback, so this is
+        // the single place that check needs to live.
+        if (env.operation_type === "restore_version") {
+          void loadFullState(repo, instance, syncMgr, instance.serverVersion, true);
+          return;
+        }
+        instance.applyRemoteOperation(env);
+      },
+      onOperationCommitted: (operationId, serverVersion) => {
+        syncMgr.markOperationConfirmed(operationId, serverVersion);
+      },
       onError: (code, message) => {
         console.warn(`[whiteboard] realtime error ${code}: ${message}`);
         if (code === "AUTH_REQUIRED" || code === "FORBIDDEN" || code === "WHITEBOARD_NOT_FOUND") {
@@ -305,12 +361,22 @@ function mount(
     });
     controller.connect();
 
+    // Keep the sync engine's server-version baseline in lockstep with the
+    // live WebSocket so its reconciliation never judges fresh operations
+    // against a stale number. Falls back to the engine's own seeded/tracked
+    // value before the controller has a confirmed version.
+    syncMgr.setServerVersionGetter(() => {
+      const v = controller ? controller.serverVersion : 0;
+      return v > 0 ? v : null;
+    });
+
     // Feed transport connectivity into the sync engine's network monitor so it
     // knows when to flush the durable queue.
     wsTransport.onStateChange((state) => {
       const online = state === "open";
       const reconnecting = state === "reconnecting";
       syncMgr.onConnectionState(online, reconnecting);
+      isOnline = online;
     });
 
     // Broadcast local cursor while the pointer moves over the stage. Throttled
@@ -329,6 +395,7 @@ function mount(
   } else {
     renderRealtimeState("closed");
     syncMgr.onConnectionState(false, false);
+    isOnline = false;
   }
 
   instance.attach();
@@ -550,6 +617,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   teardown();
 
+  partnerId = stage.dataset.wbPartnerId || undefined;
   const apiBase = stage.dataset.wbApiBase;
   const publicId = stage.dataset.wbPublicId;
   const ownerKey = stage.dataset.wbAccount;
@@ -596,29 +664,130 @@ document.addEventListener("DOMContentLoaded", () => {
       localEngine.setServerVersion(serverVersion);
 
       // Fetch and render the full state from the server (network-first).
-      fetch(`${apiBase}/`, {
-        method: "GET",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data: null | { version?: number; objects?: Array<{ object_type: string; object_id: string; points: Array<{ x: number; y: number }>; color: string; width: number; opacity: number; creator_id?: string }> }) => {
-          if (data && data.objects && data.objects.length > 0) {
-            const strokes: Stroke[] = data.objects.map((obj) => ({
-              id: obj.object_id,
-              points: obj.points.map((p) => ({ x: p.x, y: p.y })),
-              style: { color: obj.color, width: obj.width, opacity: obj.opacity },
-              creatorId: obj.creator_id,
-            }));
-            localEngine.loadServerState(strokes);
-            // Cache the freshly loaded state for offline reopen.
-            void localSync.cacheWhiteboard(data.version ?? serverVersion, strokes);
-          }
-        })
-        .catch(() => {
-          // Offline or failed — keep the cached board. The sync engine will
-          // handle reconnection.
-        });
+      // An empty response here just means "nothing to show yet" — the
+      // cached board (if any) from above stays as-is (alwaysApply=false).
+      const repo = repository;
+      if (repo) await loadFullState(repo, localEngine, localSync, serverVersion, false);
     })();
   }
+
+  bindBoardMenu();
 });
+
+// ---------------------------------------------------------------------------
+// Board menu: history, export, import (Phase 9)
+// ---------------------------------------------------------------------------
+
+function bindBoardMenu(): void {
+  const trigger = document.getElementById("wb-board-menu");
+  const popover = document.getElementById("wb-board-popover");
+  if (!trigger || !popover || !repository) return;
+  const repo = repository;
+
+  const closePopover = (): void => {
+    if (popover.classList.contains("hidden")) return;
+    popover.classList.add("hidden");
+    trigger.setAttribute("aria-expanded", "false");
+  };
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.addEventListener("click", () => {
+    if (popover.classList.contains("hidden")) {
+      popover.classList.remove("hidden");
+      trigger.setAttribute("aria-expanded", "true");
+    } else {
+      closePopover();
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (popover.classList.contains("hidden")) return;
+    const target = e.target as Node;
+    if (popover.contains(target) || trigger.contains(target)) return;
+    closePopover();
+  });
+  popover.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closePopover();
+  });
+
+  const boardTitleEl = document.getElementById("wb-title");
+  const boardTitle = (): string => boardTitleEl?.textContent?.trim() || "Shared board";
+
+  document.getElementById("wb-export-png")?.addEventListener("click", () => {
+    closePopover();
+    void (async () => {
+      if (!repository) return;
+      try {
+        const state = await repository.loadState();
+        const strokes = state.objects.map((o) => WhiteboardRepository.serverObjectToStroke(o));
+        const blob = await strokesToPngBlob(strokes);
+        downloadBlob(blob, `${boardTitle()}.png`);
+      } catch {
+        alert("Could not export — check your connection and try again.");
+      }
+    })();
+  });
+
+  document.getElementById("wb-export-json")?.addEventListener("click", () => {
+    closePopover();
+    void (async () => {
+      if (!repository) return;
+      try {
+        const state = await repository.loadState();
+        const blob = exportToJsonBlob(state.objects, boardTitle());
+        downloadBlob(blob, `${boardTitle()}.json`);
+      } catch {
+        alert("Could not export — check your connection and try again.");
+      }
+    })();
+  });
+
+  const fileInput = document.getElementById("wb-import-file") as HTMLInputElement | null;
+  document.getElementById("wb-import-json")?.addEventListener("click", () => {
+    closePopover();
+    fileInput?.click();
+  });
+  fileInput?.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = ""; // allow re-selecting the same file next time
+    if (!file || !repository || !engine) return;
+    void (async () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        alert("That file isn't valid JSON.");
+        return;
+      }
+      const objectCount =
+        parsed && typeof parsed === "object" && Array.isArray((parsed as { objects?: unknown }).objects)
+          ? (parsed as { objects: unknown[] }).objects.length
+          : 0;
+      const clearFirst = confirm(
+        `Import ${objectCount} object(s)? Choose OK to add them to the current board, or Cancel to ` +
+          `back out. (To replace the board instead of adding to it, clear the board first, then import.)`,
+      );
+      if (!clearFirst) return;
+      try {
+        const repo = repository;
+        const eng = engine;
+        const syncMgr = sync;
+        if (!repo || !eng || !syncMgr) return;
+        const result = await repo.importBoard(parsed, false);
+        await loadFullState(repo, eng, syncMgr, result.version, true);
+      } catch {
+        alert("Import failed — the file may be invalid or too large.");
+      }
+    })();
+  });
+
+  new HistoryPanel({
+    repo,
+    getServerVersion: () => engine?.serverVersion ?? 0,
+    isOnline: () => isOnline,
+    onReverted: () => {
+      const repo = repository;
+      const eng = engine;
+      const syncMgr = sync;
+      if (repo && eng && syncMgr) void loadFullState(repo, eng, syncMgr, eng.serverVersion, true);
+    },
+  }).bind();
+}

@@ -88,9 +88,7 @@ class RenameApiTests(WhiteboardTestCase):
         self.bobby = make_user("bobby@example.com")
         self.mallory = make_user("mallory@example.com")
         self.partnership = make_active_partnership(self.alice, self.bobby)
-        self.whiteboard = Whiteboard.objects.create(
-            partnership=self.partnership, title="Old"
-        )
+        self.whiteboard = Whiteboard.objects.create(partnership=self.partnership, title="Old")
 
     def _patch(self, title):
         return self.client.patch(

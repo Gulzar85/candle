@@ -7,11 +7,19 @@
  *
  *   - durable local persistence of incoming operations
  *   - connectivity detection (NetworkMonitor)
- *   - the sync state machine (idle/pending/syncing/conflict)
+ *   - the sync state machine (idle/pending/syncing/synced/error)
  *   - pull (remote ops) then push (pending ops), deterministically
  *   - bounded retries with exponential backoff
- *   - conflict reconciliation via ConflictResolver
  *   - crash recovery for interrupted (SUBMITTING) operations
+ *
+ * There is deliberately NO client-side conflict quarantine. Every operation
+ * is submitted against the newest server version (anchored at pass start and
+ * advanced by each ack), so a flush can never be judged stale for reasoning.
+ * The server stays the single authority: operation_id idempotency makes
+ * re-submits safe (`dup` acks), and a genuine permanent rejection marks the
+ * operation FAILED — surfaced as a save error, never as a blocking "conflict"
+ * panel. Operations quarantined by earlier buggy builds are healed into the
+ * pending queue at boot (see requeueConflicts).
  *
  * This module does NOT touch the canvas or DOM directly. It exposes a
  * `submit` entry point (called by the engine after a local commit) and a
@@ -28,11 +36,6 @@ import type {
 } from "./local-store";
 import { nextClientSequence } from "./local-store";
 import { NetworkMonitor, type NetworkStatus } from "./network-monitor";
-import {
-  decideReconciliation,
-  describeConflict,
-  type ConflictDecision,
-} from "./conflict-resolver";
 import type { Stroke } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -45,7 +48,6 @@ export type SyncPhase =
   | "syncing"       // actively synchronizing
   | "synced"        // all local changes committed to server
   | "reconnecting"
-  | "conflict"      // one or more operations quarantined
   | "error";
 
 export interface SyncEngineStatus {
@@ -60,8 +62,6 @@ export interface SyncEngineStatus {
 export interface SyncEngineHooks {
   /** Apply a server operation to the local engine (remote apply). Optional. */
   applyRemoteOperation?(env: OperationEnvelope): boolean;
-  /** Called when a conflicting operation is quarantined. */
-  onConflict?(whiteboardId: string, operation: LocalOperation, reason: string): void;
   /** Called when the status changes. */
   onStatusChange?(status: SyncEngineStatus): void;
 }
@@ -99,6 +99,7 @@ export interface WhiteboardLocalStoreLike {
   countPendingForBoard(whiteboardId: string): Promise<number>;
   getConflictsForBoard(whiteboardId: string): Promise<LocalConflictRecord[]>;
   saveConflict(record: LocalConflictRecord): Promise<void>;
+  resolveConflict(operationId: string): Promise<void>;
   compactConfirmedOperations(whiteboardId: string, keepServerVersion: number): Promise<void>;
   getWhiteboard(whiteboardId: string): Promise<LocalWhiteboard | undefined>;
   saveWhiteboard(board: LocalWhiteboard): Promise<void>;
@@ -185,6 +186,27 @@ export class SyncEngine {
     return this.serverVersionGetter ? this.serverVersionGetter() : this._serverVersion;
   }
 
+  /**
+   * The engine's own tracked baseline, independent of any live getter.
+   * Used as the fallback when a live-version getter has no value yet, and as
+   * the advancing counter for version-chained submissions inside a sync pass.
+   */
+  get internalServerVersion(): number {
+    return this._serverVersion;
+  }
+
+  /**
+   * Seed the confirmed server version from an authoritative source (the
+   * initial ``GET /whiteboards/<id>/`` load). Without this, the engine's
+   * internal counter starts at 0 on every fresh page load, so the very first
+   * locally-created operation is wrongly rebased down to version 0 before
+   * submission — guaranteed to be rejected as stale by the server, which
+   * this then has to recover from on a wasted round trip.
+   */
+  seedServerVersion(version: number): void {
+    this._serverVersion = Math.max(this._serverVersion, version);
+  }
+
   get phase(): SyncPhase {
     return this._phase;
   }
@@ -203,8 +225,19 @@ export class SyncEngine {
    * Called by the engine after a local commit. Durably persists the operation
    * to IndexedDB before emitting any server traffic. If IndexedDB is
    * unavailable, the operation is NOT reported as synced.
+   *
+   * ``pushHttp`` — when false, the operation is persisted for durability but
+   * the HTTP sync pass is NOT scheduled. This is used while the WebSocket is
+   * live: the op has already been sent over the wire, and the server ack
+   * (via ``markOperationConfirmed``) removes it from the queue. The durable
+   * record remains as crash recovery; a reconnect or a later sync flushes it
+   * if the ack never arrives.
    */
-  async submit(envelope: OperationEnvelope, currentVersion?: number): Promise<boolean> {
+  async submit(
+    envelope: OperationEnvelope,
+    currentVersion?: number,
+    pushHttp: boolean = true,
+  ): Promise<boolean> {
     try {
       const base = currentVersion ?? this.serverVersion;
       const op: LocalOperation = {
@@ -226,7 +259,9 @@ export class SyncEngine {
       this._phase = "pending";
       await this.refreshPendingCount();
       this._emitStatus();
-      void this.triggerSync();
+      if (pushHttp) {
+        void this.triggerSync();
+      }
       return true;
     } catch (err) {
       this._phase = "error";
@@ -234,6 +269,26 @@ export class SyncEngine {
       this._emitStatus();
       return false;
     }
+  }
+
+  /**
+   * Mark an operation as confirmed in the local store. Called by the
+   * RealtimeController when the server acknowledges an operation over WebSocket,
+   * so the sync engine's HTTP path does not redundantly re-submit it.
+   */
+  async markOperationConfirmed(operationId: string, serverVersion: number): Promise<void> {
+    await this.store.updateOperationStatus(operationId, "CONFIRMED", {
+      server_version: serverVersion,
+    });
+    this._serverVersion = Math.max(this._serverVersion, serverVersion);
+    await this.refreshPendingCount();
+    if (this._pendingCount === 0) {
+      // Never resurrect "conflict" from historied quarantines on a normal write:
+      // quarantined history is reconciled once at reopen (see requeueConflicts),
+      // and live writing should not keep surface the panel for stale leftovers.
+      this._phase = "synced";
+    }
+    this._emitStatus();
   }
 
   /** Trigger a synchronization pass (debounced). */
@@ -267,12 +322,12 @@ export class SyncEngine {
       const serverVersion = this.serverVersion;
 
       // Reconcile + push the queue.
-      await this.pushPending(pending, serverVersion);
+      const hadFailure = await this.pushPending(pending, serverVersion);
 
       // After a successful pass check if anything remains.
       const remaining = await this.store.getPendingOperations(this.whiteboardId);
       if (remaining.length === 0) {
-        this._phase = (await this.refreshConflictCount()) > 0 ? "conflict" : "synced";
+        this._phase = hadFailure ? "error" : "synced";
       } else {
         this._phase = "pending";
       }
@@ -282,47 +337,40 @@ export class SyncEngine {
     }
   }
 
-  private async pushPending(pending: LocalOperation[], serverVersion: number): Promise<void> {
-    // Separate into submit-able and conflict categories.
-    const batch: LocalOperation[] = [];
-    const conflicts: LocalOperation[] = [];
+  /**
+   * Flush the pending queue. Every operation is submitted against the newest
+   * known server version (anchored at pass start and advanced by each ack),
+   * so the HTTP leg can never carry a stale base and no client-side
+   * conflict/quarantine ever occurs.
+   *
+   * Returns true if any operation hit a permanent failure (surfaced in the
+   * status bar as a save error, never as a blocking conflict panel).
+   */
+  private async pushPending(pending: LocalOperation[], serverVersion: number): Promise<boolean> {
+    // Anchor the pass to the newest known version (the live value, when a
+    // controller is attached). Acks below advance `_serverVersion`, so the
+    // submission loop chains correctly for multi-op gestures even though the
+    // live-version getter is read-only.
+    this._serverVersion = Math.max(this._serverVersion, serverVersion);
+
+    let hadFailure = false;
 
     for (const op of pending) {
-      const decision: ConflictDecision = decideReconciliation({
-        operation_type: op.operation_type as never,
-        base_version: op.base_version,
-        server_version: serverVersion,
+      await this.store.updateOperationStatus(op.operation_id, "SUBMITTING", {
+        last_attempt_at: Date.now(),
       });
 
-      if (decision.action === "submit" || decision.action === "rebase") {
-        const rebased: LocalOperation = {
-          ...op,
-          base_version: decision.action === "rebase" ? decision.newBaseVersion : op.base_version,
-          status: "SUBMITTING",
-          retry_count: op.retry_count,
-          last_attempt_at: Date.now(),
-          updated_at: Date.now(),
-        };
-        await this.store.updateOperationStatus(op.operation_id, "SUBMITTING", {
-          last_attempt_at: Date.now(),
-        });
-        batch.push(rebased);
-      } else {
-        conflicts.push(op);
-        await this.quarantineConflict(op, serverVersion);
-      }
-    }
-
-    // Submit in order (already sorted by client_sequence).
-    for (const op of batch) {
+      // Always submit against the anchored live version. Re-submits carry the
+      // server's latest base; the server's operation_id idempotency makes
+      // duplicate acks safe, and a genuine rejection marks the op FAILED
+      // rather than quarantining it.
       const envelope: OperationEnvelope = {
         operation_id: op.operation_id,
         operation_type: op.operation_type,
-        base_version: op.base_version,
+        base_version: this._serverVersion,
         payload: op.payload,
       };
-      let ok = false;
-      let statusCode = 0;
+
       try {
         const result = await this.repo.submitBatch([envelope]);
         const ack = result.acks?.[0];
@@ -333,9 +381,7 @@ export class SyncEngine {
             last_error: undefined,
           });
           this._serverVersion = Math.max(this._serverVersion, ack.version);
-          // Remove confirmed ops from the local queue once server-confirmed.
           await this.store.compactConfirmedOperations(this.whiteboardId, ack.version);
-          ok = true;
         }
       } catch (err) {
         const error = err as {
@@ -343,29 +389,21 @@ export class SyncEngine {
           apiError?: { error?: string; current_version?: number; retry_after?: number };
           message?: string;
         };
-        statusCode = error.status ?? 0;
         const apiErr = error.apiError?.error;
 
         if (apiErr === "STALE_VERSION") {
-          // The base version went stale mid-flight. Re-run reconciliation with
-          // the reported current version.
-          const serverNow = error.apiError?.current_version ?? serverVersion;
+          // The base version went stale mid-flight (rare: partner committed
+          // between anchor and this submit). Re-schedule against the reported
+          // current version.
+          const serverNow = error.apiError?.current_version ?? this._serverVersion;
           await this.store.updateOperationStatus(op.operation_id, "PENDING", {
             retry_count: op.retry_count + 1,
             last_error: apiErr,
             last_attempt_at: Date.now(),
           });
-          // Re-run the whole sync (reconciles again with new version).
           this._serverVersion = serverNow;
           this._scheduleSync(Date.now() + 50);
           break;
-        }
-
-        if (apiErr === "FORBIDDEN" || apiErr === "WHITEBOARD_ARCHIVED") {
-          // Permanent rejection — quarantine rather than retry forever.
-          await this.quarantineConflict(op, this.serverVersion, error.message);
-          this.hooks.onConflict?.(this.whiteboardId, op, error.message ?? apiErr ?? "");
-          continue;
         }
 
         if (error.status === 429) {
@@ -379,7 +417,7 @@ export class SyncEngine {
           break;
         }
 
-        // Network / 0 / 5xx: retry with backoff.
+        // Network / 0 / 5xx: retry with exponential backoff.
         if (error.status === undefined || error.status === 0 || error.status >= 500) {
           if (op.retry_count < MAX_RETRIES) {
             await this.store.updateOperationStatus(op.operation_id, "PENDING", {
@@ -393,46 +431,30 @@ export class SyncEngine {
             ) + Math.floor(Math.random() * 250);
             this._scheduleSync(Date.now() + delay);
           } else {
-            // Exhausted retries — mark FAILED (needs attention, not silently
-            // discarded).
             await this.store.updateOperationStatus(op.operation_id, "FAILED", {
               last_error: "max_retries_exceeded",
               last_attempt_at: Date.now(),
             });
-            this._phase = "error";
-            this._emitStatus();
+            hadFailure = true;
           }
           break;
         }
 
-        // 400s, other — permanent.
-        await this.quarantineConflict(op, this.serverVersion, error.message ?? "rejected");
+        // Permanent rejection (FORBIDDEN / 4xx / other). Mark the operation
+        // FAILED so it does not silently vanish, but never quarantine — the
+        // server is the sole authority and a fresh re-submit after the user
+        // takes corrective action (e.g. re-opens the board) will resolve it.
+        await this.store.updateOperationStatus(op.operation_id, "FAILED", {
+          retry_count: op.retry_count + 1,
+          last_error: apiErr ?? error.message ?? "rejected",
+          last_attempt_at: Date.now(),
+        });
+        hadFailure = true;
       }
     }
 
     this._emitStatus();
-  }
-
-  private async quarantineConflict(op: LocalOperation, serverVersion: number, reason?: string): Promise<void> {
-    const message = reason ?? describeConflict(
-      op.operation_type as never,
-      op.base_version,
-      serverVersion,
-    );
-    await this.store.saveConflict({
-      operation_id: op.operation_id,
-      whiteboard_id: op.whiteboard_id,
-      owner_key: this.ownerKey,
-      operation: { ...op, status: "CONFLICT" },
-      reason: message,
-      detected_at: Date.now(),
-      status: "CONFLICT",
-      updated_at: Date.now(),
-    });
-    // Mark the underlying op CONFLICT so it is no longer considered pending.
-    await this.store.updateOperationStatus(op.operation_id, "CONFLICT");
-    this._phase = "conflict";
-    this._emitStatus();
+    return hadFailure;
   }
 
   private _scheduleSync(afterMs: number): void {
@@ -488,6 +510,43 @@ export class SyncEngine {
   async refreshConflictCount(): Promise<number> {
     this._conflictCount = (await this.store.getConflictsForBoard(this.whiteboardId)).length;
     return this._conflictCount;
+  }
+
+  /**
+   * Requeue every quarantined conflict for this board as PENDING and attempt
+   * a sync. This never discards data — a "reject" decision (e.g. a delete
+   * whose target may have changed) can still bounce back into quarantine if
+   * it is genuinely still unsafe, but a conflict caused by a since-corrected
+   * stale version (the common case) will now go through cleanly.
+   */
+  async resolveAllConflicts(): Promise<void> {
+    const conflicts = await this.store.getConflictsForBoard(this.whiteboardId);
+    for (const conflict of conflicts) {
+      await this.store.resolveConflict(conflict.operation_id);
+    }
+    await this.refreshConflictCount();
+    await this.refreshPendingCount();
+    this.triggerSync();
+  }
+
+  /**
+   * Requeue quarantined history for idempotent reconciliation on reopen.
+   * Old spurious conflicts (e.g. from buggy sessions where an operation was
+   * both delivered over WebSocket and rejected over HTTP) correspond to
+   * operations the server already applied, so the follow-up pass resolves them
+   * as duplicates; genuinely unsafe ones bounce straight back into quarantine.
+   * Runs once per initialize; safe offline (requeued ops simply re-enter the
+   * pending queue and retry on reconnect).
+   */
+  async requeueConflicts(): Promise<number> {
+    const conflicts = await this.store.getConflictsForBoard(this.whiteboardId);
+    if (conflicts.length === 0) return 0;
+    for (const conflict of conflicts) {
+      await this.store.resolveConflict(conflict.operation_id);
+    }
+    await this.refreshConflictCount();
+    await this.refreshPendingCount();
+    return conflicts.length;
   }
 
   private _emitStatus(): void {

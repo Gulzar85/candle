@@ -37,8 +37,8 @@ export interface ControllerDeps {
 onApplyRemote(op: OperationEnvelopeForWire): void;
 /** Surface a collaboration error (auth, stale version, etc.). */
 onError?(code: string, message: string): void;
-  /** Surface a collaboration error (auth, stale version, etc.). */
-  onError?(code: string, message: string): void;
+  /** Notify that an operation was committed via WebSocket. */
+  onOperationCommitted?(operationId: string, serverVersion: number): void;
   /** Receive presence join/leave/cursor updates. */
   onPresence?(event: ServerMessage): void;
   /** Watch the derived connection state for the UI indicator. */
@@ -180,6 +180,7 @@ export class RealtimeController {
   private handleCommitted(msg: OperationCommitted): void {
     this._setServerVersion(msg.version);
     this.pending.delete(msg.operation_id);
+    this.deps.onOperationCommitted?.(msg.operation_id, msg.version);
     if (this.applied.has(msg.operation_id)) {
       return; // ours (or already applied) — nothing to render again.
     }

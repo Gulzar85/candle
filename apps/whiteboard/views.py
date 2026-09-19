@@ -59,6 +59,7 @@ def whiteboard_home(request: HttpRequest, public_id: str) -> HttpResponse:
         "page_title": "Shared space",
         "whiteboard": whiteboard,
         "partnership": partnership,
+        "partner": partner,
         "user_initials": (user.profile.get_initials if hasattr(user, "profile") else "") or "",
         "partner_initials": (
             partner.profile.get_initials if partner and hasattr(partner, "profile") else ""

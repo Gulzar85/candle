@@ -76,3 +76,25 @@ class PasswordResetTest(AccountTestCase):
             self.client.post("/accounts/password-reset/", {"email": "bob@example.com"})
         response = self.client.post("/accounts/password-reset/", {"email": "bob@example.com"})
         self.assertEqual(response.status_code, 429)
+
+    def test_reset_confirm_rate_limited_after_six_attempts(self):
+        self.client.post("/accounts/password-reset/", {"email": "bob@example.com"})
+        uid, token = extract_reset_uid_token(mail.outbox[0].body)
+        first = self.client.get(f"/accounts/password-reset/{uid}/{token}/")
+        form_url = first["Location"]
+
+        # Mismatched passwords fail form validation without consuming the
+        # token, so the same link can be POSTed repeatedly to exercise the
+        # rate limiter without ever completing a real reset.
+        for _ in range(6):
+            response = self.client.post(
+                form_url,
+                {"new_password1": "a", "new_password2": "b"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        response = self.client.post(
+            form_url,
+            {"new_password1": "a", "new_password2": "b"},
+        )
+        self.assertEqual(response.status_code, 429)

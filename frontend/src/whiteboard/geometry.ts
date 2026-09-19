@@ -133,3 +133,146 @@ export function unionBounds(boxes: readonly BBox[]): BBox | null {
   }
   return { minX, minY, maxX, maxY };
 }
+
+// ---------------------------------------------------------------------------
+// Move / resize (Phase 9): shared math for engine.ts (gesture handling /
+// hit-testing) and renderer.ts (handle drawing). Kept here rather than in
+// either of those DOM-coupled files because this is the trickiest new math
+// (including the degenerate-bbox edge case) and this is the one module that
+// is actually unit-tested.
+// ---------------------------------------------------------------------------
+
+/** Below this world-space extent, a bounding box dimension is treated as
+ * degenerate (a perfectly vertical/horizontal stroke) -- dividing by it to
+ * derive a resize scale would produce NaN/Infinity. */
+export const MIN_BBOX_DIMENSION = 1e-3;
+
+/** Matches the server's accepted resize scale range (validator.py). */
+export const MIN_SCALE = 0.001;
+export const MAX_SCALE = 1000;
+
+/** `newLength / oldLength`, with `oldLength` floored to MIN_BBOX_DIMENSION
+ * so a near-zero source extent never produces NaN/Infinity. */
+export function safeScaleFactor(newLength: number, oldLength: number): number {
+  const denom = Math.abs(oldLength) < MIN_BBOX_DIMENSION ? MIN_BBOX_DIMENSION : oldLength;
+  return clampScale(newLength / denom);
+}
+
+function clampScale(scale: number): number {
+  if (!Number.isFinite(scale)) return 1;
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+}
+
+export type HandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+const OPPOSITE_HANDLE: Record<HandleId, HandleId> = {
+  nw: "se",
+  n: "s",
+  ne: "sw",
+  e: "w",
+  se: "nw",
+  s: "n",
+  sw: "ne",
+  w: "e",
+};
+
+export function oppositeHandle(handle: HandleId): HandleId {
+  return OPPOSITE_HANDLE[handle];
+}
+
+/** World-space position of every resize handle around `box` (4 corners + 4
+ * edge midpoints). */
+export function handlePositions(box: BBox): Record<HandleId, Point> {
+  const midX = (box.minX + box.maxX) / 2;
+  const midY = (box.minY + box.maxY) / 2;
+  return {
+    nw: { x: box.minX, y: box.minY },
+    n: { x: midX, y: box.minY },
+    ne: { x: box.maxX, y: box.minY },
+    e: { x: box.maxX, y: midY },
+    se: { x: box.maxX, y: box.maxY },
+    s: { x: midX, y: box.maxY },
+    sw: { x: box.minX, y: box.maxY },
+    w: { x: box.minX, y: midY },
+  };
+}
+
+/** Handles safe to show/hit-test for `box`. A handle is omitted when
+ * dragging it would require deriving a scale from a ~zero bbox dimension: a
+ * near-zero-width box only exposes the two handles that resize height alone
+ * (n/s); a near-zero-height box only exposes width-only handles (w/e). */
+export function visibleHandles(box: BBox): HandleId[] {
+  const width = box.maxX - box.minX;
+  const height = box.maxY - box.minY;
+  const degenerateW = width < MIN_BBOX_DIMENSION;
+  const degenerateH = height < MIN_BBOX_DIMENSION;
+  if (degenerateW && degenerateH) return [];
+  if (degenerateW) return ["n", "s"];
+  if (degenerateH) return ["w", "e"];
+  return ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+}
+
+/** Nearest visible handle to `point` within `tolerance`, or null. */
+export function nearestHandle(
+  point: Point,
+  positions: Record<HandleId, Point>,
+  visible: readonly HandleId[],
+  tolerance: number,
+): HandleId | null {
+  let best: HandleId | null = null;
+  let bestDist = tolerance;
+  for (const id of visible) {
+    const d = distance(point, positions[id]);
+    if (d <= bestDist) {
+      best = id;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/** Translate every point by a fixed delta. */
+export function translatePoints(points: readonly Point[], dx: number, dy: number): Point[] {
+  return points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+}
+
+/** Scale every point from a fixed anchor (the point that stays put). Never
+ * scales anything else about the object (e.g. stroke width) -- callers
+ * decide what, if anything, else changes. */
+export function scalePointsFromAnchor(
+  points: readonly Point[],
+  anchor: Point,
+  scaleX: number,
+  scaleY: number,
+): Point[] {
+  return points.map((p) => ({
+    x: anchor.x + (p.x - anchor.x) * scaleX,
+    y: anchor.y + (p.y - anchor.y) * scaleY,
+  }));
+}
+
+/**
+ * Given `handle` dragged to `newPoint`, compute the (anchor, scaleX, scaleY)
+ * transform relative to `box` (the object's original bounding box). The
+ * anchor is always the opposite handle's position -- a fixed point, matching
+ * exactly how the server's RESIZE_OBJECT applies the same transform
+ * (state_reconstruction.py). Edge handles (n/s/w/e) only scale one axis;
+ * corner handles scale both.
+ */
+export function computeResizeTransform(
+  box: BBox,
+  handle: HandleId,
+  newPoint: Point,
+): { anchor: Point; scaleX: number; scaleY: number } {
+  const positions = handlePositions(box);
+  const anchor = positions[oppositeHandle(handle)];
+  const affectsX = handle !== "n" && handle !== "s";
+  const affectsY = handle !== "w" && handle !== "e";
+  const scaleX = affectsX
+    ? safeScaleFactor(newPoint.x - anchor.x, positions[handle].x - anchor.x)
+    : 1;
+  const scaleY = affectsY
+    ? safeScaleFactor(newPoint.y - anchor.y, positions[handle].y - anchor.y)
+    : 1;
+  return { anchor, scaleX, scaleY };
+}

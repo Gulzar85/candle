@@ -338,6 +338,253 @@ class ReplayDeterminismTests(TestCase):
         self.assertEqual(start.order, ["s0"])
 
 
+class ReplayMoveTests(TestCase):
+    def test_move_translates_points(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(WhiteboardOperationType.MOVE_OBJECT, {"object_id": "s1", "dx": 5, "dy": -2}),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects["s1"]["points"], [{"x": 5, "y": -2}, {"x": 15, "y": 8}])
+
+    def test_move_preserves_other_fields(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}],
+                    "color": "#dc2626",
+                    "width": 5,
+                    "opacity": 0.7,
+                    "creator_id": "alice",
+                },
+            ),
+            _op_dict(WhiteboardOperationType.MOVE_OBJECT, {"object_id": "s1", "dx": 1, "dy": 1}),
+        ]
+        state = reconstruct_state(ops)
+        obj = state.objects["s1"]
+        self.assertEqual(obj["color"], "#dc2626")
+        self.assertEqual(obj["width"], 5)
+        self.assertEqual(obj["creator_id"], "alice")
+
+    def test_move_does_not_change_z_order(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s2",
+                    "points": [{"x": 5, "y": 5}],
+                    "color": "#f00",
+                    "width": 2,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(WhiteboardOperationType.MOVE_OBJECT, {"object_id": "s1", "dx": 1, "dy": 1}),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.order, ["s1", "s2"])
+
+    def test_move_nonexistent_is_noop(self) -> None:
+        ops = [
+            _op_dict(WhiteboardOperationType.MOVE_OBJECT, {"object_id": "nope", "dx": 1, "dy": 1})
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects, {})
+        self.assertEqual(state.order, [])
+
+    def test_move_does_not_mutate_start_state(self) -> None:
+        """Regression test: replay's start= copy is shallow (dict(start.objects)),
+        so a mutation op must always rebind a new object dict, never patch the
+        shared dict in place, or it would corrupt the caller's start state."""
+        start = ReconstructedState(
+            objects={
+                "s1": {
+                    "object_id": "s1",
+                    "object_type": "stroke",
+                    "points": [{"x": 0, "y": 0}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                }
+            },
+            order=["s1"],
+        )
+        original_points = start.objects["s1"]["points"]
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.MOVE_OBJECT, {"object_id": "s1", "dx": 100, "dy": 100}
+            )
+        ]
+        result = WhiteboardStateBuilder.replay(ops, start=start)
+
+        # The start state's object must be byte-for-byte unchanged...
+        self.assertEqual(start.objects["s1"]["points"], [{"x": 0, "y": 0}])
+        self.assertIs(start.objects["s1"]["points"], original_points)
+        # ...while the result reflects the move.
+        self.assertEqual(result.objects["s1"]["points"], [{"x": 100, "y": 100}])
+
+
+class ReplayResizeTests(TestCase):
+    def test_resize_scales_from_anchor(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.RESIZE_OBJECT,
+                {"object_id": "s1", "anchor": {"x": 0, "y": 0}, "scale_x": 2, "scale_y": 2},
+            ),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects["s1"]["points"], [{"x": 0, "y": 0}, {"x": 20, "y": 20}])
+
+    def test_resize_does_not_scale_width(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}],
+                    "color": "#000",
+                    "width": 5,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.RESIZE_OBJECT,
+                {"object_id": "s1", "anchor": {"x": 0, "y": 0}, "scale_x": 3, "scale_y": 3},
+            ),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects["s1"]["width"], 5)
+
+    def test_resize_nonexistent_is_noop(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.RESIZE_OBJECT,
+                {"object_id": "nope", "anchor": {"x": 0, "y": 0}, "scale_x": 2, "scale_y": 2},
+            )
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects, {})
+
+    def test_resize_does_not_mutate_start_state(self) -> None:
+        start = ReconstructedState(
+            objects={
+                "s1": {
+                    "object_id": "s1",
+                    "object_type": "stroke",
+                    "points": [{"x": 0, "y": 0}, {"x": 10, "y": 10}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                }
+            },
+            order=["s1"],
+        )
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.RESIZE_OBJECT,
+                {"object_id": "s1", "anchor": {"x": 0, "y": 0}, "scale_x": 5, "scale_y": 5},
+            )
+        ]
+        WhiteboardStateBuilder.replay(ops, start=start)
+        self.assertEqual(start.objects["s1"]["points"], [{"x": 0, "y": 0}, {"x": 10, "y": 10}])
+
+
+class ReplayRestoreTests(TestCase):
+    def test_restore_replaces_state_wholesale(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s2",
+                    "points": [{"x": 5, "y": 5}],
+                    "color": "#f00",
+                    "width": 2,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.RESTORE_VERSION,
+                {
+                    "target_sequence": 1,
+                    "objects": [
+                        {
+                            "object_type": "stroke",
+                            "object_id": "s1",
+                            "points": [{"x": 0, "y": 0}],
+                            "color": "#000",
+                            "width": 3,
+                            "opacity": 1,
+                            "creator_id": None,
+                        }
+                    ],
+                },
+            ),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(list(state.objects.keys()), ["s1"])
+        self.assertEqual(state.order, ["s1"])
+
+    def test_restore_to_empty(self) -> None:
+        ops = [
+            _op_dict(
+                WhiteboardOperationType.CREATE_STROKE,
+                {
+                    "object_id": "s1",
+                    "points": [{"x": 0, "y": 0}],
+                    "color": "#000",
+                    "width": 3,
+                    "opacity": 1,
+                },
+            ),
+            _op_dict(
+                WhiteboardOperationType.RESTORE_VERSION, {"target_sequence": 0, "objects": []}
+            ),
+        ]
+        state = reconstruct_state(ops)
+        self.assertEqual(state.objects, {})
+        self.assertEqual(state.order, [])
+
+
 class ReplayStrokePayloadTests(TestCase):
     def test_stroke_preserves_all_fields(self) -> None:
         payload = {
