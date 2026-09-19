@@ -45,14 +45,19 @@ DJANGO_SITE_URL=https://cand.pythonanywhere.com
 DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 DJANGO_EMAIL_HOST=smtp.gmail.com
 DJANGO_EMAIL_PORT=587
-DJANGO_EMAIL_HOST_USER=
-DJANGO_EMAIL_HOST_PASSWORD=
+DJANGO_EMAIL_HOST_USER=gulzar.ufone@gmail.com
+DJANGO_EMAIL_HOST_PASSWORD=replace-with-a-16-character-gmail-app-password
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_EMAIL_TIMEOUT=10
 ```
 
 Set `SQLITE_NAME` to the actual absolute path if the PythonAnywhere username
 or checkout directory differs from `cand/candle`.
+
+For Gmail, enable 2-Step Verification and create an app password at
+<https://myaccount.google.com/apppasswords>. Use that 16-character app
+password as `DJANGO_EMAIL_HOST_PASSWORD`; never use or commit your normal
+Google account password.
 
 ## Database and static files
 
