@@ -1,0 +1,17 @@
+{
+  "src/main.ts": {
+    "file": "assets/main.js",
+    "name": "main",
+    "src": "src/main.ts",
+    "isEntry": true,
+    "css": [
+      "assets/main.css"
+    ]
+  },
+  "src/whiteboard/index.ts": {
+    "file": "assets/whiteboard.js",
+    "name": "whiteboard",
+    "src": "src/whiteboard/index.ts",
+    "isEntry": true
+  }
+}

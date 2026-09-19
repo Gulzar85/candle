@@ -4,8 +4,6 @@ __pycache__/
 *$py.class
 *.so
 *.egg-info/
-dist/
-build/
 *.egg
 .eggs/
 
@@ -35,8 +33,6 @@ staticfiles.json
 
 # Node
 node_modules/
-frontend/dist/
-frontend/.vite/
 
 # IDE
 .vscode/

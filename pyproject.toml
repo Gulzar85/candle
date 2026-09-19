@@ -12,7 +12,6 @@ dependencies = [
     "channels>=4.3.2,<5",
     "channels-redis>=4.3.0,<5",
     "djangorestframework>=3.18.0,<4",
-    "django-csp>=4.0.0,<5",
     "psycopg[binary]>=3.3,<4",
     "redis>=8.1,<9",
     "whitenoise>=6.9,<7",
