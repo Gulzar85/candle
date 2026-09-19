@@ -34,7 +34,7 @@ verify (this repo has no deployed staging/production target — see
 ## Authorization
 
 - [x] Object-level access control — every protected view/API/WebSocket path checks `is_active_member(user, partnership)` via the centralized `apps.partnerships.policies`/`apps.whiteboard.policies` predicates, not `@login_required` alone.
-- [x] Partnership isolation — a user can only ever hold one active membership (DB partial unique index **and** a PL/pgSQL trigger, `apps/partnerships/migrations/0002_parternship_db_constraints.py` — two independent enforcement layers, not just app-level checks).
+- [x] Partnership isolation — a user can only ever hold one active membership (DB partial unique index **and** a database trigger — PL/pgSQL on PostgreSQL in `apps/partnerships/migrations/0002_parternship_db_constraints.py`, native SQLite triggers in `0003_sqlite_member_triggers.py` — two independent enforcement layers, not just app-level checks).
 - [x] Whiteboard isolation — resolved only via the owning partnership's membership; `public_id` UUIDs are not treated as a secret substitute for authorization (server always re-checks membership regardless of whether the UUID was guessed or leaked).
 - [x] WebSocket authorization — re-checked on every inbound message (`_still_authorized`, `apps/whiteboard/consumers.py`), **and** proactively pushed to passive (non-sending) connections when a partnership ends (`whiteboard_reauthorize` handler + `apps/whiteboard/realtime_signals.py`, added during the Phase 5 audit pass of this project — closes the gap where a silent listener could otherwise keep receiving broadcasts after their access was revoked).
 - [x] Operation authorization — actor is always the authenticated connection's user, never client-supplied; server rejects any operation payload attempting to set `actor`/`sequence`/`resulting_version`/`created_at` (`apps/whiteboard/validator.py` `_FORBIDDEN_FIELDS`).
@@ -42,7 +42,7 @@ verify (this repo has no deployed staging/production target — see
 
 ## Data
 
-- [x] PostgreSQL is the sole production database — no SQLite fallback exists in any settings module.
+- [x] PostgreSQL is the default production database; SQLite is a supported fallback (`DJANGO_DATABASE_ENGINE=sqlite`) for single-file hosts like PythonAnywhere — its `OPTIONS` enable WAL journaling and immediate-mode transactions, and the membership-invariant trigger has a native SQLite equivalent (see `apps/partnerships/migrations/0003_sqlite_member_triggers.py`).
 - [x] Least-privilege / credential guard — `DATABASES["default"]["PASSWORD"]` is validated non-empty in production (`ImproperlyConfigured` if unset, added this pass). **Deferred to deployment**: the actual database *user*'s grants (should be scoped to this app's schema only, not superuser) are a provisioning-time decision this repo can't enforce from code.
 - [x] Backups documented — `docs/operations/backup-and-restore.md`. **Partially verified**: a local `pg_dump`/restore smoke test was actually run against the local dev database (see that doc for the real result) — this is not the same as a verified production backup pipeline, which is **deferred to deployment**.
 - [ ] **Deferred to deployment**: production backup automation (scheduled `pg_dump`/WAL archiving, off-site storage, retention enforcement) is not provisioned anywhere — no such infrastructure exists to configure in this repo.

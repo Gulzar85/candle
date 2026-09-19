@@ -19,6 +19,10 @@ def install_member_triggers(apps: Any, schema_editor: Any) -> None:
 
     These are enforced with a BEFORE trigger on ``partnerships_partnershipmember``
     that runs for INSERT and UPDATE.
+
+    SQLite gets an equivalent set of triggers installed by a later migration
+    (0003) rather than here, since editing an already-applied RunPython step
+    wouldn't re-run on databases that migrated before that support existed.
     """
     if schema_editor.connection.vendor != "postgresql":
         return

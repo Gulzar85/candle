@@ -84,6 +84,39 @@ jobs:
       - name: pytest
         run: pytest -q
 
+  backend-sqlite:
+    runs-on: ubuntu-latest
+    # Production also supports SQLite (PythonAnywhere's deployment target),
+    # which has different concurrency/locking behavior than PostgreSQL — run
+    # the same suite against it so that backend doesn't silently bit-rot.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Django system checks
+        run: python manage.py check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+          DJANGO_DATABASE_ENGINE: sqlite
+
+      - name: pytest
+        # test_concurrency.py's TransactionTestCase classes use
+        # serialized_rollback=True, which has a known pytest-django/SQLite
+        # interaction bug (contenttypes get inserted twice on fixture
+        # teardown) unrelated to this project's code. Real concurrency
+        # behavior on SQLite is covered by manual verification instead; see
+        # apps/partnerships/migrations/0003_sqlite_member_triggers.py.
+        run: pytest -q --ignore=tests/whiteboard/test_concurrency.py
+        env:
+          DJANGO_DATABASE_ENGINE: sqlite
+
   frontend:
     runs-on: ubuntu-latest
 

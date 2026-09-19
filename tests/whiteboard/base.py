@@ -29,8 +29,9 @@ def make_user(email: str, *, verified: bool = True) -> User:
 def make_active_partnership(alice: User, bobby: User) -> Partnership:
     """Create an ACTIVE partnership with the two partners as active members.
 
-    The Postgres trigger ``enforce_partnership_member_rules`` insists on exactly
-    the two active members created here and a fresh user set per call (one active
+    The membership-invariant trigger (``enforce_partnership_member_rules`` on
+    PostgreSQL, its SQLite equivalent elsewhere) insists on exactly the two
+    active members created here and a fresh user set per call (one active
     membership per user), which this helper satisfies.
     """
     partnership = Partnership.objects.create(status=PartnershipStatus.ACTIVE, accepted_at=None)

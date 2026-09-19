@@ -4,7 +4,9 @@ This is the only place that mutates whiteboard operation state. The view/API
 layer never touches ``WhiteboardOperation`` directly — it calls this service
 after authenticating and authorizing the caller.
 
-A submit is atomic and row-locked:
+A submit is atomic and row-locked (on PostgreSQL; SQLite has no row-level
+locking, so the surrounding transaction serializes the whole database instead
+-- see ``OPTIONS["transaction_mode"]`` in settings):
 
     BEGIN TRANSACTION
         lock whiteboard row                  (select_for_update)

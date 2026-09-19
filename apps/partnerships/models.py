@@ -4,8 +4,9 @@ A ``Partnership`` is a **security boundary**: it groups exactly two users (the
 inviter/owner and the joined member) and every future shared resource will be
 authorizable through it. No partnership information is stored on ``User``.
 
-Concurrency / integrity are enforced at the database level (see the migration
-that installs PL/pgSQL triggers):
+Concurrency / integrity are enforced at the database level (see the migrations
+that install a PL/pgSQL trigger on PostgreSQL, and an equivalent set of native
+triggers on SQLite):
 
 * a partnership can hold **at most two ACTIVE members** (cannot be bypassed by
   racing requests);
@@ -13,7 +14,10 @@ that installs PL/pgSQL triggers):
   person).
 
 Application code additionally uses ``select_for_update()`` + ``atomic()`` so
-accept flows serialise and give deterministic, user-friendly errors.
+accept flows serialise and give deterministic, user-friendly errors. SQLite
+has no row-level locking, but its writer transactions are already serialized
+whole-database (see ``OPTIONS["transaction_mode"]`` in settings), which gives
+the same effective guarantee for a single-process deployment.
 """
 
 from __future__ import annotations

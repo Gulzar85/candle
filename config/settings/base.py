@@ -90,6 +90,18 @@ if DATABASE_ENGINE == "sqlite":
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": os.environ.get("SQLITE_NAME", str(BASE_DIR / "db.sqlite3")),
+            "OPTIONS": {
+                # Wait for the write lock instead of raising "database is
+                # locked" immediately (SQLite is single-writer).
+                "timeout": 20,
+                # Acquire the write lock at BEGIN instead of at the first
+                # write, so concurrent transactions serialize the same way
+                # select_for_update()/advisory locks do on PostgreSQL,
+                # rather than racing past their locking reads and only
+                # colliding (with a raw OperationalError) at COMMIT.
+                "transaction_mode": "IMMEDIATE",
+                "init_command": ("PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;"),
+            },
         }
     }
 else:

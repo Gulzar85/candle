@@ -117,8 +117,9 @@ class WhiteboardOperation(models.Model):
         related_name="whiteboard_operations",
     )
     operation_type = models.CharField(max_length=32, choices=WhiteboardOperationType.choices)
-    # Compact, validated payload (stroke geometry, clear marker, ...). Stored as
-    # JSONB. Never stores the whole board state.
+    # Compact, validated payload (stroke geometry, clear marker, ...). Stored
+    # as JSONB on PostgreSQL, as TEXT on SQLite (Django's JSONField is
+    # portable either way). Never stores the whole board state.
     payload = models.JSONField(default=dict, blank=True)
     # The board version the client observed when it made this op (used to detect
     # STALE_VERSION). Purely informational for Phase 4.
