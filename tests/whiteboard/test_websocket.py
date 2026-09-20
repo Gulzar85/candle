@@ -304,7 +304,7 @@ def _http_post_op(w: Any, op_id: str) -> Any:
                 "operation_type": "create_stroke",
                 "payload": {
                     "object_id": str(uuid4()),
-                    "points": [{"x": 1, "y": 2}],
+                    "points": [{"x": 1, "y": 2}, {"x": 3, "y": 4}],
                     "color": "#2563eb",
                     "width": 4,
                     "opacity": 1.0,
@@ -322,13 +322,13 @@ async def test_http_submit_duplicate_still_broadcasts_duplicate_flag() -> None:
     await _ready(alice)
 
     op_id = str(uuid4())
-    assert await sync_to_async(_http_post_op)(w, op_id).status_code == 200
+    assert (await sync_to_async(_http_post_op)(w, op_id)).status_code == 200
     first = await _ready(alice)
     assert first["type"] == rt.S_OPERATION_COMMITTED
     assert first["duplicate"] is False
 
     # Retrying the same operation id over HTTP broadcasts a duplicate ack.
-    assert await sync_to_async(_http_post_op)(w, op_id).status_code == 200
+    assert (await sync_to_async(_http_post_op)(w, op_id)).status_code == 200
     second = await _ready(alice)
     assert second["operation_id"] == op_id
     assert second["duplicate"] is True
