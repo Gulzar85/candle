@@ -38,6 +38,13 @@ let realtime: RealtimeController | null = null;
 let transport: WebSocketTransport | null = null;
 let repository: WhiteboardRepository | null = null;
 let isOnline = false;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// How often to check for a partner's changes when the WebSocket isn't
+// connected (some hosts, e.g. a plain WSGI deployment, never accept the
+// upgrade at all -- see docs/deployment). Without this, a partner's edits
+// only ever show up after a manual page reload.
+const POLL_INTERVAL_MS = 4_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -271,6 +278,45 @@ async function loadFullState(
   }
 }
 
+/**
+ * Poll for operations committed by a partner while the WebSocket is not
+ * `ready`. This is the only way a partner's edits ever arrive when the
+ * WebSocket can't connect at all (a plain WSGI host never accepts the
+ * upgrade -- the connection attempt just 404s, forever, on every retry).
+ * A no-op whenever `controller` reports `ready`, so it never duplicates
+ * work the live socket is already doing.
+ */
+function startRemotePolling(
+  repo: WhiteboardRepository,
+  instance: Engine,
+  syncMgr: SyncManager,
+  controller: RealtimeController,
+): void {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (controller.state === "ready") return;
+    void (async () => {
+      try {
+        const cursor = instance.serverVersion;
+        const { operations, version } = await repo.loadOperations(cursor);
+        for (const op of operations) {
+          if (op.operation_type === "restore_version") {
+            await loadFullState(repo, instance, syncMgr, version, true);
+            continue;
+          }
+          instance.applyRemoteOperation(op);
+          instance.setServerVersion(op.resulting_version);
+        }
+        if (operations.length === 0 && version > instance.serverVersion) {
+          instance.setServerVersion(version);
+        }
+      } catch {
+        // Offline or a transient failure -- next tick tries again.
+      }
+    })();
+  }, POLL_INTERVAL_MS);
+}
+
 // ---------------------------------------------------------------------------
 // Engine + persistence wiring
 // ---------------------------------------------------------------------------
@@ -360,6 +406,7 @@ function mount(
       onStateChange: renderRealtimeState,
     });
     controller.connect();
+    startRemotePolling(repo, instance, syncMgr, controller);
 
     // Keep the sync engine's server-version baseline in lockstep with the
     // live WebSocket so its reconciliation never judges fresh operations
@@ -597,6 +644,10 @@ function bindTitleRename(): void {
 }
 
 function teardown(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
   sync?.destroy();
   sync = null;
   realtime?.close();
