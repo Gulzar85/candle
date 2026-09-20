@@ -9,4 +9,4 @@ sys.path.insert(0, str(BASE_DIR))
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
-from config.wsgi import application  # noqa: E402
+from config.wsgi import application  # noqa: E402,F401
