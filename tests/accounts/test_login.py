@@ -1,9 +1,6 @@
 """Login flow tests: verification gate, remember-me, and rate limiting."""
 
-from unittest.mock import patch
-
 from django.core import mail
-from django.utils import timezone
 
 from apps.accounts.models import User
 
@@ -60,21 +57,16 @@ class LoginTest(AccountTestCase):
 
     def test_login_rate_limited_after_seven_attempts(self):
         self._user(verified=False)
-        # The ratelimiter keys its counter by the current minute, so pin the
-        # clock to one instant to keep all seven attempts in the same bucket
-        # (otherwise a minute rollover mid-test makes this flaky under a long run).
-        fixed_now = timezone.now()
-        with patch("apps.accounts.ratelimit.timezone.now", return_value=fixed_now):
-            # 6 attempts are allowed; the 7th trips the limiter -> 429.
-            for _ in range(6):
-                self.client.post(
-                    "/accounts/login/",
-                    {"username": "bob@example.com", "password": "bad"},
-                )
-            response = self.client.post(
+        # 6 attempts are allowed; the 7th trips the limiter -> 429.
+        for _ in range(6):
+            self.client.post(
                 "/accounts/login/",
                 {"username": "bob@example.com", "password": "bad"},
             )
+        response = self.client.post(
+            "/accounts/login/",
+            {"username": "bob@example.com", "password": "bad"},
+        )
         self.assertEqual(response.status_code, 429)
         self.assertTemplateUsed(response, "accounts/rate_limited.html")
 

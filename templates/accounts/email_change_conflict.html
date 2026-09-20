@@ -1,0 +1,21 @@
+{% extends "layouts/auth.html" %}
+
+{% block auth_content %}
+<div class="text-center">
+  <div class="flex items-center justify-center w-12 h-12 rounded-full bg-danger/10 mx-auto mb-4">
+    <i data-lucide="shield-alert" class="w-6 h-6 text-danger" aria-hidden="true"></i>
+  </div>
+  <h1 class="text-xl font-semibold tracking-tight mb-2">That email is already in use</h1>
+  <p class="text-sm text-muted-foreground mb-6">
+    Someone registered {{ new_email }} while this confirmation link was pending.
+    Your email address has not been changed. Sign in and request the change
+    again with a different address.
+  </p>
+  <div class="space-y-2">
+    <a href="{% url 'accounts:login' %}"
+       class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium min-h-[44px] transition-colors hover:bg-primary/90">
+      Back to sign in
+    </a>
+  </div>
+</div>
+{% endblock %}

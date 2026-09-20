@@ -6,11 +6,18 @@ third-party security framework. Each call site supplies a namespace/scope and a
 key (typically an IP address, plus the target email where relevant) so that a
 compromised endpoint can be throttled independently.
 
-The limiter uses an incrementing counter stored in the cache. A request is
-allowed while the counter stays below ``limit`` within ``window`` seconds.
-Once the limit is reached the scope enters a cooldown in which further
-requests are rejected for ``cooldown`` seconds. On authenticated success the
-caller can reset the counter so a legitimate user is not penalised further.
+The limiter uses an incrementing counter stored in the cache for exactly
+``window`` seconds from the *first* request in that window (a true fixed
+window, not a wall-clock-minute bucket -- a counter keyed by the current
+calendar minute resets at every minute boundary regardless of when the
+window actually started, which both under-counts a burst that straddles a
+boundary and makes a "5 minute window" behave like a "1 minute window").
+Once the limit is reached within that window, a *separate* cooldown marker
+is set for ``cooldown`` seconds; unlike the counter, the cooldown is not
+tied to the counter's expiry, so a blocked caller stays blocked for the
+full cooldown even if the counter window happens to lapse first. On
+authenticated success the caller can reset both so a legitimate user is not
+penalised further.
 """
 
 from __future__ import annotations
@@ -18,7 +25,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.core.cache import cache
-from django.utils import timezone
 
 
 @dataclass(frozen=True)
@@ -31,8 +37,12 @@ class RateLimitResult:
         return not self.allowed
 
 
-def _key(scope: str, key: str) -> str:
-    return f"ratelimit:{scope}:{timezone.now().strftime('%Y%m%d%H%M')}:{key}"
+def _count_key(scope: str, key: str) -> str:
+    return f"ratelimit:count:{scope}:{key}"
+
+
+def _block_key(scope: str, key: str) -> str:
+    return f"ratelimit:block:{scope}:{key}"
 
 
 def check(
@@ -49,22 +59,31 @@ def check(
     affect registration. ``cooldown`` (seconds) is how long to keep rejecting
     after the limit is exceeded; it defaults to ``window``.
     """
-    cache_key = _key(scope, key)
-    value = cache.get(cache_key)
-    if value is None:
-        cache.add(cache_key, 1, timeout=window)
+    cooldown = window if cooldown is None else cooldown
+
+    if cache.get(_block_key(scope, key)) is not None:
+        return RateLimitResult(allowed=False, retry_after=cooldown)
+
+    count_key = _count_key(scope, key)
+    if cache.add(count_key, 1, timeout=window):
+        # First request of a fresh window.
         return RateLimitResult(allowed=True)
 
-    if value >= limit:
-        # A compatible cache backend is not guaranteed to expose TTL, so the
-        # retry-after is derived from the configured window/cooldown instead.
-        retry = cooldown if cooldown is not None else window
-        return RateLimitResult(allowed=False, retry_after=retry)
+    try:
+        value = cache.incr(count_key)
+    except ValueError:
+        # The counter expired between add() and incr() (a narrow race at the
+        # window boundary) -- treat this as the first request of a new one.
+        cache.add(count_key, 1, timeout=window)
+        return RateLimitResult(allowed=True)
 
-    cache.incr(cache_key, delta=1)
+    if value > limit:
+        cache.set(_block_key(scope, key), True, timeout=cooldown)
+        return RateLimitResult(allowed=False, retry_after=cooldown)
+
     return RateLimitResult(allowed=True)
 
 
 def reset(scope: str, key: str) -> None:
-    """Clear the counter for ``key`` after a successful authentication."""
-    cache.delete(_key(scope, key))
+    """Clear the counter and any active cooldown after a successful auth."""
+    cache.delete_many([_count_key(scope, key), _block_key(scope, key)])

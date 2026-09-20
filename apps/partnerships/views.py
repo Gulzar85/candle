@@ -8,11 +8,12 @@ and mobile consumers can reuse it.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render, resolve_url
 from django.views.decorators.http import require_http_methods
 
@@ -288,7 +289,15 @@ def invitation_reject(request: HttpRequest, public_id: str) -> HttpResponse:
 @login_required
 @require_http_methods(["POST"])
 def partnership_end(request: HttpRequest) -> HttpResponse:
-    partnership = get_object_or_404(Partnership, public_id=request.POST.get("partnership_id", ""))
+    # Unlike a <uuid:...> URL path converter (which 404s a malformed value
+    # before the view runs), a POST field is unvalidated input: UUIDField's
+    # to_python() raises ValidationError -- not Http404 -- for a non-UUID
+    # string, and get_object_or_404 only catches the latter.
+    try:
+        partnership_id = uuid.UUID(request.POST.get("partnership_id", ""))
+    except ValueError:
+        raise Http404("Invalid partnership_id.") from None
+    partnership = get_object_or_404(Partnership, public_id=partnership_id)
     form = ConfirmEndForm(request.POST)
     if not form.is_valid():
         messages.error(

@@ -201,7 +201,6 @@ class Profile(models.Model):
         default=default_accent_color,
         help_text="Your identity color across avatars and presence.",
     )
-    timezone = models.CharField(max_length=64, default="UTC", blank=True)
     locale = models.CharField(max_length=10, default="en")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

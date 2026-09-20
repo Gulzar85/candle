@@ -1,7 +1,9 @@
 """Profile editing and avatar upload tests."""
 
 import io
+from unittest.mock import patch
 
+from django.contrib.messages import get_messages
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
@@ -32,7 +34,6 @@ class ProfileTest(AccountTestCase):
                 "pronouns": "he/him",
                 "bio": "Loves whiteboards.",
                 "accent_color": "#dc2626",
-                "timezone": "Europe/Paris",
                 "locale": "fr",
             },
         )
@@ -42,7 +43,6 @@ class ProfileTest(AccountTestCase):
         self.assertEqual(self.user.profile.pronouns, "he/him")
         self.assertEqual(self.user.profile.bio, "Loves whiteboards.")
         self.assertEqual(self.user.profile.accent_color, "#dc2626")
-        self.assertEqual(self.user.profile.timezone, "Europe/Paris")
         self.assertEqual(self.user.profile.locale, "fr")
 
     def test_requires_login(self):
@@ -71,6 +71,22 @@ class AvatarUploadTest(AccountTestCase):
         response = self.client.post("/accounts/profile/avatar/", {"avatar": avatar})
         self.assertRedirects(response, "/accounts/profile/", fetch_redirect_response=False)
         self.assertFalse(self.user.profile.avatar.name)
+
+    def test_decode_failure_at_save_time_does_not_crash(self):
+        """A file that passes ImageField's cheap open()+verify() check (form
+        is_valid() succeeds) but fails Pillow's full pixel decode in
+        process_avatar() -- e.g. a decompression bomb -- must be reported as
+        a normal form error, not surface as an unhandled 500."""
+        avatar = SimpleUploadedFile("me.png", make_png_bytes(), content_type="image/png")
+        with patch(
+            "apps.accounts.forms.process_avatar",
+            side_effect=ValidationError("Uploaded file is not a valid image."),
+        ):
+            response = self.client.post("/accounts/profile/avatar/", {"avatar": avatar})
+        self.assertRedirects(response, "/accounts/profile/", fetch_redirect_response=False)
+        self.assertFalse(self.user.profile.avatar.name)
+        messages = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertIn("Uploaded file is not a valid image.", messages)
 
 
 class AvatarUnitTest(AccountTestCase):

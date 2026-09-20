@@ -17,28 +17,6 @@ from django.core.exceptions import ValidationError
 from .avatars import process_avatar, validate_upload_size
 from .models import ACCENT_COLOR_CHOICES, Profile, User
 
-COMMON_TIMEZONES = [
-    "UTC",
-    "America/New_York",
-    "America/Chicago",
-    "America/Denver",
-    "America/Los_Angeles",
-    "America/Sao_Paulo",
-    "Europe/London",
-    "Europe/Berlin",
-    "Europe/Paris",
-    "Africa/Abidjan",
-    "Africa/Cairo",
-    "Africa/Johannesburg",
-    "Asia/Dubai",
-    "Asia/Kolkata",
-    "Asia/Singapore",
-    "Asia/Seoul",
-    "Asia/Tokyo",
-    "Australia/Brisbane",
-    "Australia/Sydney",
-]
-
 
 def normalize_email(value: str) -> str:
     return get_user_model().objects.normalize_email(value or "")
@@ -151,7 +129,7 @@ class ProfileForm(forms.ModelForm):
 
     class Meta:
         model = Profile
-        fields = ["display_name", "pronouns", "bio", "accent_color", "timezone", "locale"]
+        fields = ["display_name", "pronouns", "bio", "accent_color", "locale"]
         widgets = {
             "display_name": forms.TextInput(attrs={"autocomplete": "name"}),
             "pronouns": forms.TextInput(
@@ -160,7 +138,6 @@ class ProfileForm(forms.ModelForm):
             "bio": forms.Textarea(
                 attrs={"rows": 2, "maxlength": 280, "placeholder": "A short line about you"}
             ),
-            "timezone": forms.Select(choices=[(tz, tz) for tz in COMMON_TIMEZONES]),
             "locale": forms.Select(
                 choices=[("en", "English"), ("fr", "French"), ("es", "Spanish")]
             ),

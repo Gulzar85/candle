@@ -39,6 +39,8 @@ from django.contrib.auth.views import (
 from django.contrib.auth.views import (
     PasswordResetView as DjangoPasswordResetView,
 )
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse, reverse_lazy
@@ -77,10 +79,20 @@ RATE_LIMITS = {
 
 
 def client_ip(request: HttpRequest) -> str:
-    """Best-effort client IP honoring the trusted proxy header in production."""
+    """Best-effort client IP honoring the trusted proxy header in production.
+
+    Production (PythonAnywhere) sits behind exactly one reverse proxy, which
+    appends the address it actually saw as the LAST entry in
+    X-Forwarded-For. Everything before that is client-suppliable: a request
+    can carry its own ``X-Forwarded-For: 1.2.3.4`` and the proxy simply adds
+    its own observation after it, so using the FIRST entry (as this used to)
+    let a caller pick any rate-limit bucket it wanted, defeating the limiter
+    entirely. Taking the last entry instead trusts only what the proxy
+    itself observed.
+    """
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
     if forwarded is not None:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.META.get("REMOTE_ADDR", "unknown")
 
 
@@ -150,16 +162,38 @@ def verify_email(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
     if user is None:
         return render(request, "accounts/verification_invalid.html", status=400)
 
-    record = EmailVerificationToken.consume_any(user, token)
-    if record is None:
-        return render(request, "accounts/verification_invalid.html", status=400)
+    # Consuming the token and applying it happen in one transaction: if
+    # applying it fails (a change-email confirm racing a fresh registration
+    # of the same address, which trips User.email's unique constraint), the
+    # token's deletion inside consume_any() is rolled back too, so the link
+    # is not burned for a failure the user didn't cause.
+    record = None
+    try:
+        with transaction.atomic():
+            record = EmailVerificationToken.consume_any(user, token)
+            if record is None:
+                return render(request, "accounts/verification_invalid.html", status=400)
 
-    if record.purpose == EmailVerificationToken.PURPOSE_CHANGE:
-        new_email = record.new_email or user.email
-        user.email = new_email
-        user.email_pending = ""
-        user.email_verified = True
-        user.save(update_fields=["email", "email_pending", "email_verified", "updated_at"])
+            if record.purpose == EmailVerificationToken.PURPOSE_CHANGE:
+                new_email = record.new_email or user.email
+                user.email = new_email
+                user.email_pending = ""
+                user.email_verified = True
+                user.save(update_fields=["email", "email_pending", "email_verified", "updated_at"])
+            else:
+                new_email = None
+                user.email_verified = True
+                user.save(update_fields=["email_verified", "updated_at"])
+    except IntegrityError:
+        logger.info("email.change_conflict user_id=%s", user.pk)
+        return render(
+            request,
+            "accounts/email_change_conflict.html",
+            {"new_email": record.new_email if record else ""},
+            status=409,
+        )
+
+    if new_email is not None:
         logger.info("email.change_confirmed user_id=%s", user.pk)
         return render(
             request,
@@ -167,8 +201,6 @@ def verify_email(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
             {"new_email": new_email},
         )
 
-    user.email_verified = True
-    user.save(update_fields=["email_verified", "updated_at"])
     logger.info("email.verified user_id=%s", user.pk)
     messages.success(request, "Your email address is verified. You can now sign in.")
     return redirect("accounts:login")
@@ -403,8 +435,17 @@ def profile(request: HttpRequest) -> HttpResponse:
 def avatar_upload(request: HttpRequest) -> HttpResponse:
     form = AvatarForm(request.POST, request.FILES)
     if form.is_valid():
-        form.save(request.user)
-        messages.success(request, "Avatar updated.")
+        # ImageField's own validation only opens + verify()s the file, which
+        # never decodes pixel data -- a small, highly-compressed image with
+        # an enormous declared width/height (a "decompression bomb") passes
+        # here and only fails inside process_avatar()'s image.load(), so
+        # that ValidationError has to be caught here, not just at is_valid().
+        try:
+            form.save(request.user)
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0])
+        else:
+            messages.success(request, "Avatar updated.")
     else:
         error = form.errors.get("avatar", ["Could not process the image."])
         messages.error(request, error[0] if isinstance(error, list) else error)

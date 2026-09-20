@@ -87,8 +87,15 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 
 # ---------------------------------------------------------------------------
 # Static files — hashed, compressed manifest storage (requires collectstatic).
+# Merge into base.py's STORAGES rather than replacing it outright: a plain
+# reassignment here drops the "default" backend (FileSystemStorage, used by
+# every FileField/ImageField -- e.g. Profile.avatar), which doesn't merely
+# change upload behavior, it makes django.core.files.storage.default_storage
+# raise KeyError: 'default' the moment anything touches it (an avatar
+# upload, or even opening a Profile in the admin).
 # ---------------------------------------------------------------------------
 STORAGES = {
+    **STORAGES,
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
