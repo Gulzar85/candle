@@ -7,6 +7,7 @@
   <meta name="description" content="Candle - A private, collaborative partner whiteboard.">
   <meta name="theme-color" content="#0a0a0a">
   <meta name="csrf-token" content="{{ csrf_token }}">
+  <meta name="htmx-config" content='{"inlineStyleNonce": "{{ csp_nonce }}"}'>
 
   <link rel="manifest" href="{% static 'manifest.json' %}">
   <link rel="apple-touch-icon" href="{% static 'icons/icon-192.png' %}">
