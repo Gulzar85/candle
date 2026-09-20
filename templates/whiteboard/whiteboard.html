@@ -1,26 +1,71 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static form_helpers %}
 
 {% block extra_css %}
 <style {% csp_nonce_attr %}>
   /* The whiteboard takes the whole viewport; the body must not scroll. */
   .wb-shell { min-height: 100dvh; }
   .wb-save-dot { transition: background-color 0.3s ease; }
+  /* Drawing surface: prevent the browser's native scroll/pinch-zoom from
+     hijacking touch input (must live in a nonce'd <style>, not an inline
+     style="" attribute -- the production CSP's style-src has no
+     'unsafe-inline', so inline style attributes are silently dropped). */
+  #wb-stage { touch-action: none; }
+  /* Presence-avatar accent colors are per-user data, so they can't be
+     static Tailwind classes; safe_hex_color guards against CSS injection
+     since this value lands in a style rule, not an HTML attribute. */
+  .wb-avatar-you { background-color: {{ user.profile.accent_color|safe_hex_color }}; }
+  {% if partner %}.wb-avatar-partner { background-color: {{ partner.profile.accent_color|safe_hex_color }}; }{% endif %}
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="wb-shell flex flex-col bg-background">
 
-  {# -- Toolbar ----------------------------------------------------------- #}
-  <header class="relative flex items-center gap-1 sm:gap-3 px-2 sm:px-3 h-14 border-b border-border bg-card shrink-0 select-none pt-[env(safe-area-inset-top)] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
+  {# -- Top bar: exit, board name, participants only ----------------------- #}
+  <header class="relative flex items-center gap-2 sm:gap-3 px-2 sm:px-3 h-14 border-b border-border bg-card shrink-0 select-none pt-[env(safe-area-inset-top)] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
     <a href="{% url 'accounts:dashboard' %}"
        class="wb-icon-btn shrink-0" aria-label="Exit to dashboard" title="Exit to dashboard">
       <i data-lucide="arrow-left" class="w-5 h-5" aria-hidden="true"></i>
     </a>
     <div class="w-px h-6 bg-border mx-0.5 sm:mx-1 shrink-0" aria-hidden="true"></div>
 
-    <div class="min-w-0 flex items-center gap-0.5 sm:gap-2 overflow-x-auto no-scrollbar">
+    <div class="min-w-0 flex-1 flex items-center justify-center gap-2 px-1">
+      <button type="button" id="wb-title"
+              data-wb-title="{{ whiteboard.title|default:'Shared board' }}"
+              data-wb-api-base="/api/whiteboards/{{ partnership.public_id }}"
+              class="max-w-full truncate rounded-md px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              title="Rename board">{{ whiteboard.title }}</button>
+    </div>
+
+    <div class="flex items-center -space-x-1.5 shrink-0" aria-label="People in this space">
+      <div class="wb-avatar-you relative w-7 h-7 rounded-full ring-2 ring-card flex items-center justify-center text-[11px] font-semibold text-white overflow-hidden"
+           title="You">
+        {% if user.profile.avatar %}
+        <img src="{{ user.profile.avatar.url }}" alt="" class="w-full h-full object-cover">
+        {% else %}
+        {{ user.profile.get_initials }}
+        {% endif %}
+      </div>
+      {% if partner %}
+      <div id="wb-presence-partner"
+           class="wb-avatar-partner relative w-7 h-7 rounded-full ring-2 ring-card flex items-center justify-center text-[11px] font-semibold text-white overflow-hidden opacity-40 transition-opacity"
+           title="{{ partner_name|default:'Partner' }} (offline)">
+        {% if partner.profile.avatar %}
+        <img src="{{ partner.profile.avatar.url }}" alt="" class="w-full h-full object-cover">
+        {% else %}
+        {{ partner.profile.get_initials }}
+        {% endif %}
+        <span id="wb-presence-partner-dot" class="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-muted-foreground ring-1 ring-card" aria-hidden="true"></span>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <div class="flex flex-1 min-h-0">
+
+    {# -- Left tool rail ---------------------------------------------------- #}
+    <aside class="flex flex-col items-center gap-0.5 sm:gap-1 w-14 shrink-0 border-r border-border bg-card overflow-y-auto py-2 select-none pl-[env(safe-area-inset-left)]">
       <button type="button" id="wb-btn-pen" data-wb-tool="pen"
               class="wb-icon-btn wb-tool-btn shrink-0" aria-pressed="true" aria-label="Draw"
               title="Draw (P)">
@@ -36,7 +81,7 @@
               title="Select (V)">
         <i data-lucide="mouse-pointer-2" class="w-5 h-5" aria-hidden="true"></i>
       </button>
-      <div class="w-px h-6 bg-border mx-0.5 sm:mx-1 shrink-0" aria-hidden="true"></div>
+      <div class="h-px w-6 bg-border my-0.5 sm:my-1 shrink-0" aria-hidden="true"></div>
       <button type="button" id="wb-delete" class="wb-icon-btn shrink-0 text-muted-foreground disabled:opacity-40 disabled:pointer-events-none"
               aria-label="Delete selected" title="Delete selected (Del)" disabled>
         <i data-lucide="trash-2" class="w-5 h-5" aria-hidden="true"></i>
@@ -51,44 +96,13 @@
               title="Clear board (Ctrl+Shift+X)">
         <i data-lucide="spray-can" class="w-5 h-5" aria-hidden="true"></i>
       </button>
-    </div>
 
-    <div class="min-w-0 flex-1 flex items-center justify-center gap-2 px-1">
-      <button type="button" id="wb-title"
-              data-wb-title="{{ whiteboard.title|default:'Shared board' }}"
-              data-wb-api-base="/api/whiteboards/{{ partnership.public_id }}"
-              class="max-w-full truncate rounded-md px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-              title="Rename board">{{ whiteboard.title }}</button>
+      <div class="h-px w-6 bg-border my-0.5 sm:my-1 shrink-0" aria-hidden="true"></div>
 
-      <div class="hidden sm:flex items-center -space-x-1.5 shrink-0" aria-label="People in this space">
-        <div class="relative w-7 h-7 rounded-full ring-2 ring-card flex items-center justify-center text-[11px] font-semibold text-white overflow-hidden"
-             style="background-color: {{ user.profile.accent_color|default:'#52525b' }};" title="You">
-          {% if user.profile.avatar %}
-          <img src="{{ user.profile.avatar.url }}" alt="" class="w-full h-full object-cover">
-          {% else %}
-          {{ user.profile.get_initials }}
-          {% endif %}
-        </div>
-        {% if partner %}
-        <div id="wb-presence-partner"
-             class="relative w-7 h-7 rounded-full ring-2 ring-card flex items-center justify-center text-[11px] font-semibold text-white overflow-hidden opacity-40 transition-opacity"
-             style="background-color: {{ partner.profile.accent_color|default:'#52525b' }};" title="{{ partner_name|default:'Partner' }} (offline)">
-          {% if partner.profile.avatar %}
-          <img src="{{ partner.profile.avatar.url }}" alt="" class="w-full h-full object-cover">
-          {% else %}
-          {{ partner.profile.get_initials }}
-          {% endif %}
-          <span id="wb-presence-partner-dot" class="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-muted-foreground ring-1 ring-card" aria-hidden="true"></span>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="min-w-0 flex items-center gap-0.5 sm:gap-2 overflow-x-auto no-scrollbar">
       <button type="button" id="wb-zoom-out" class="wb-icon-btn shrink-0" aria-label="Zoom out" title="Zoom out">
         <i data-lucide="zoom-out" class="w-5 h-5" aria-hidden="true"></i>
       </button>
-      <button type="button" id="wb-zoom-reset" class="shrink-0 px-2 h-9 rounded-md text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors hidden sm:inline-flex"
+      <button type="button" id="wb-zoom-reset" class="shrink-0 px-1.5 h-9 rounded-md text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors hidden sm:inline-flex"
               aria-label="Reset zoom" title="Reset zoom (100%)">100%</button>
       <button type="button" id="wb-zoom-in" class="wb-icon-btn shrink-0" aria-label="Zoom in" title="Zoom in">
         <i data-lucide="zoom-in" class="w-5 h-5" aria-hidden="true"></i>
@@ -96,7 +110,8 @@
       <button type="button" id="wb-fit" class="wb-icon-btn shrink-0" aria-label="Fit to view" title="Fit to view">
         <i data-lucide="maximize" class="w-5 h-5" aria-hidden="true"></i>
       </button>
-      <div class="w-px h-6 bg-border mx-0.5 sm:mx-1 shrink-0" aria-hidden="true"></div>
+
+      <div class="h-px w-6 bg-border my-0.5 sm:my-1 shrink-0" aria-hidden="true"></div>
 
       <div class="relative shrink-0">
         <button type="button" id="wb-settings" class="wb-icon-btn" aria-label="Stroke style" title="Stroke style"
@@ -104,15 +119,15 @@
           <i data-lucide="palette" class="w-5 h-5" aria-hidden="true"></i>
         </button>
         <div id="wb-style-popover" role="dialog" aria-label="Stroke style"
-             class="hidden absolute right-0 top-full mt-2 z-30 w-56 rounded-xl border border-border bg-popover text-popover-foreground shadow-3 p-3">
+             class="hidden absolute left-full top-0 ml-2 z-30 w-56 rounded-xl border border-border bg-popover text-popover-foreground shadow-3 p-3">
           <p class="text-xs font-medium text-muted-foreground mb-2">Color</p>
           <div class="flex items-center gap-1.5 flex-wrap" aria-label="Stroke palette">
-            <button type="button" data-wb-color="#2563eb" class="wb-color-swatch w-7 h-7 rounded-full ring-2 ring-offset-1 ring-primary" style="background:#2563eb" aria-label="Blue"></button>
-            <button type="button" data-wb-color="#dc2626" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#dc2626" aria-label="Red"></button>
-            <button type="button" data-wb-color="#16a34a" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#16a34a" aria-label="Green"></button>
-            <button type="button" data-wb-color="#d97706" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#d97706" aria-label="Amber"></button>
-            <button type="button" data-wb-color="#7c3aed" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#7c3aed" aria-label="Violet"></button>
-            <button type="button" data-wb-color="#171717" class="wb-color-swatch w-7 h-7 rounded-full" style="background:#171717" aria-label="Near-black"></button>
+            <button type="button" data-wb-color="#2563eb" class="wb-color-swatch w-7 h-7 rounded-full ring-2 ring-offset-1 ring-primary bg-[#2563eb]" aria-label="Blue"></button>
+            <button type="button" data-wb-color="#dc2626" class="wb-color-swatch w-7 h-7 rounded-full bg-[#dc2626]" aria-label="Red"></button>
+            <button type="button" data-wb-color="#16a34a" class="wb-color-swatch w-7 h-7 rounded-full bg-[#16a34a]" aria-label="Green"></button>
+            <button type="button" data-wb-color="#d97706" class="wb-color-swatch w-7 h-7 rounded-full bg-[#d97706]" aria-label="Amber"></button>
+            <button type="button" data-wb-color="#7c3aed" class="wb-color-swatch w-7 h-7 rounded-full bg-[#7c3aed]" aria-label="Violet"></button>
+            <button type="button" data-wb-color="#171717" class="wb-color-swatch w-7 h-7 rounded-full bg-[#171717]" aria-label="Near-black"></button>
           </div>
           <label for="wb-width" class="flex items-center justify-between text-xs font-medium text-muted-foreground mt-4 mb-1.5">
             <span>Width</span><span id="wb-width-label">3px</span>
@@ -131,7 +146,7 @@
           <i data-lucide="history" class="w-5 h-5" aria-hidden="true"></i>
         </button>
         <div id="wb-board-popover" role="menu" aria-label="Board menu"
-             class="hidden absolute right-0 top-full mt-2 z-30 w-48 rounded-xl border border-border bg-popover text-popover-foreground shadow-3 py-1.5">
+             class="hidden absolute left-full top-0 ml-2 z-30 w-48 rounded-xl border border-border bg-popover text-popover-foreground shadow-3 py-1.5">
           <button type="button" id="wb-open-history" role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors">
             <i data-lucide="clock" class="w-4 h-4 text-muted-foreground" aria-hidden="true"></i>
@@ -160,8 +175,9 @@
               aria-haspopup="dialog" aria-controls="wb-help-dialog">
         <i data-lucide="keyboard" class="w-5 h-5" aria-hidden="true"></i>
       </button>
-    </div>
-  </header>
+    </aside>
+
+    <div class="flex flex-col flex-1 min-w-0 min-h-0">
 
   <div id="wb-help-dialog" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4"
        role="dialog" aria-modal="true" aria-labelledby="wb-help-title">
@@ -211,7 +227,6 @@
   {# -- Canvas stage ------------------------------------------------------ #}
   <main class="relative flex-1 min-h-0 overflow-hidden bg-muted/40"
         id="wb-stage"
-        style="touch-action: none;"
         data-wb-user="{{ creator_initials|default:'' }}"
         data-wb-partner="{{ partner_initials|default:'' }}"
         data-wb-partner-id="{{ partner.public_id|default:'' }}"
@@ -253,6 +268,8 @@
     </div>
   </footer>
 
+    </div>
+  </div>
 </div>
 {% endblock %}
 

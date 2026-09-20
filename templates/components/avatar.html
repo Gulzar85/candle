@@ -1,3 +1,4 @@
+{% load form_helpers %}
 {% if image_url %}
 <img
   src="{{ image_url }}"
@@ -6,10 +7,19 @@
   class="avatar object-cover {% if size == 'sm' %}w-8 h-8{% elif size == 'lg' %}w-14 h-14{% else %}w-10 h-10{% endif %}"
 >
 {% else %}
+{% if accent_color %}
+{% comment %}
+accent_color is per-user data, so it can't be a static Tailwind class; the
+class name is derived from the (validated) color itself, so two instances
+with the same color safely emit the same idempotent rule. A nonce'd
+<style> block is required in production -- style-src has no
+'unsafe-inline', so an inline style="" attribute is silently dropped.
+{% endcomment %}
+<style {% csp_nonce_attr %}>.avatar-accent-{{ accent_color|safe_hex_color|cut:"#" }}{background-color:{{ accent_color|safe_hex_color }};color:#fff;}</style>
+{% endif %}
 <div
   aria-label="{{ name }}"
-  class="avatar {% if not accent_color and tone == 'primary' %}bg-primary text-primary-foreground{% endif %} {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
-  {% if accent_color %}style="background-color: {{ accent_color }}; color: #fff;"{% endif %}
+  class="avatar {% if not accent_color and tone == 'primary' %}bg-primary text-primary-foreground{% endif %} {% if accent_color %}avatar-accent-{{ accent_color|safe_hex_color|cut:"#" }}{% endif %} {% if size == 'sm' %}w-8 h-8 text-xs{% elif size == 'lg' %}w-14 h-14 text-sm{% else %}w-10 h-10 text-sm{% endif %}"
 >
   {% if initials %}
   {{ initials }}

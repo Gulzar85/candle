@@ -166,6 +166,13 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+  /* Selection ring for an accent-color swatch (profile settings). Uses
+     currentColor so it needs no per-color rule of its own -- pair with a
+     class that sets `color` to the swatch's own hex (see avatar-accent-*,
+     generated per-request since accent_color is user data). */
+  .accent-swatch-selected {
+    box-shadow: 0 0 0 2px var(--color-card), 0 0 0 4px currentColor;
+  }
 }
 
 /* Components */

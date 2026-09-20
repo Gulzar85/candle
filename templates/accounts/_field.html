@@ -15,7 +15,7 @@
   {% elif field.field.widget.input_type == "checkbox" %}
   <label class="flex items-start gap-3 cursor-pointer">
     {{ field }}
-    <span class="text-sm {{ field.help_text|default:'' }}">{{ field.help_text|default:field.label }}</span>
+    <span class="text-sm">{{ field.help_text|default:field.label }}</span>
   </label>
   {% else %}
   {{ field|inputclass }}

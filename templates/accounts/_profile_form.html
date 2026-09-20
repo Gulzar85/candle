@@ -9,15 +9,25 @@
     </div>
     {% include "accounts/_field.html" with field=form.bio %}
 
-    {# Identity color — rendered as swatches instead of the generic field partial. #}
+    {% comment %}
+    Identity color — rendered as swatches instead of the generic field partial.
+    Colors come from the server-defined ACCENT_COLOR_CHOICES preset, but
+    still can't be an inline style="" -- production's style-src has no
+    'unsafe-inline', so a nonce'd <style> block carries the per-color
+    rules (this partial is also returned standalone by the HTMX form
+    post, so the rule must live here, not in a page-level extra_css).
+    {% endcomment %}
+    <style {% csp_nonce_attr %}>
+      {% for radio in form.accent_color %}.avatar-accent-{{ radio.data.value|safe_hex_color|cut:"#" }}{background-color:{{ radio.data.value|safe_hex_color }};color:{{ radio.data.value|safe_hex_color }};}
+      {% endfor %}
+    </style>
     <div class="space-y-1.5">
       <label class="block text-sm font-medium mb-0.5">{{ form.accent_color.label }}</label>
       <div class="flex flex-wrap items-center gap-2.5" role="radiogroup" aria-label="Identity color">
         {% for radio in form.accent_color %}
         <label class="relative cursor-pointer [&_input]:sr-only [&_input]:pointer-events-none">
           {{ radio.tag }}
-          <span class="block w-8 h-8 rounded-full transition-shadow"
-                style="background-color: {{ radio.data.value }}; {% if radio.data.selected %}box-shadow: 0 0 0 2px var(--color-card), 0 0 0 4px {{ radio.data.value }};{% endif %}"></span>
+          <span class="avatar-accent-{{ radio.data.value|safe_hex_color|cut:"#" }} block w-8 h-8 rounded-full transition-shadow {% if radio.data.selected %}accent-swatch-selected{% endif %}"></span>
           <span class="sr-only">{{ radio.choice_label }}</span>
           {% if radio.data.selected %}
           <i data-lucide="check" class="w-4 h-4 text-white absolute inset-0 m-auto pointer-events-none" aria-hidden="true"></i>

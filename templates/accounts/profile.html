@@ -1,5 +1,14 @@
 {% extends "layouts/shell.html" %}
-{% load static %}
+{% load static form_helpers %}
+
+{% block extra_css %}
+{% comment %}
+accent_color is per-user data, so it can't be a static Tailwind class, and
+production's style-src has no 'unsafe-inline' -- inline style="" attributes
+are silently dropped there, so this must be a nonce'd <style> block.
+{% endcomment %}
+<style {% csp_nonce_attr %}>.avatar-accent-{{ profile.accent_color|safe_hex_color|cut:"#" }}{background-color:{{ profile.accent_color|safe_hex_color }};}</style>
+{% endblock %}
 
 {% block content %}
 {% include "components/_messages.html" %}
@@ -19,12 +28,11 @@
           {% if profile.avatar %}
           <img src="{{ profile.avatar.url }}" alt="Your avatar" class="w-20 h-20 rounded-full object-cover border border-border">
           {% else %}
-          <div class="flex items-center justify-center w-20 h-20 rounded-full text-xl font-semibold text-white"
-               style="background-color: {{ profile.accent_color }};">
+          <div class="avatar-accent-{{ profile.accent_color|safe_hex_color|cut:"#" }} flex items-center justify-center w-20 h-20 rounded-full text-xl font-semibold text-white">
             {{ profile.get_initials }}
           </div>
           {% endif %}
-          <span class="absolute bottom-0 right-0 block w-5 h-5 rounded-full border-2 border-card" style="background-color: {{ profile.accent_color }};" aria-hidden="true"></span>
+          <span class="avatar-accent-{{ profile.accent_color|safe_hex_color|cut:"#" }} absolute bottom-0 right-0 block w-5 h-5 rounded-full border-2 border-card" aria-hidden="true"></span>
         </div>
         <div class="flex-1 min-w-0">
           <p class="font-semibold truncate">{{ profile.get_display_name }}</p>

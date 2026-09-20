@@ -1,6 +1,26 @@
+import re
+
 from django import template
 
 register = template.Library()
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@register.filter(name="safe_hex_color")
+def safe_hex_color(value: str, fallback: str = "#52525b") -> str:
+    """Return ``value`` if it's a strict ``#rrggbb`` hex color, else ``fallback``.
+
+    Used wherever a user-controlled color (``Profile.accent_color``) is
+    interpolated into a ``<style>`` block rather than an HTML attribute --
+    autoescaping protects HTML context but does nothing for CSS syntax
+    characters like ``;`` or ``}``, so this is the injection guard for that
+    context.
+    """
+    if isinstance(value, str) and _HEX_COLOR_RE.match(value):
+        return value
+    return fallback
+
 
 # Shared design-system input classes so every auth/account field is consistent.
 INPUT_CLASS = (
@@ -35,9 +55,12 @@ def inputclass(field, extra: str = ""):
 def inputclass_alpine(field, alpine_attrs: str = ""):
     """Render a BoundField's widget inside an Alpine component.
 
-    ``alpine_attrs`` is space-separated Alpine bindings injected verbatim onto
-    the widget (e.g. ``":type=show ? 'text' : 'password'"``). Preserves the
-    existing widget classes and adds ``pr-10`` so text clears an inline toggle.
+    ``alpine_attrs`` is a single ``name=value`` Alpine binding injected
+    verbatim onto the widget (e.g. ``":type=show ? 'text' : 'password'"``).
+    Split only on the first ``=`` -- the value itself commonly contains
+    spaces (a ternary expression), so splitting on whitespace first would
+    shred it into several bogus attributes. Preserves the existing widget
+    classes and adds ``pr-10`` so text clears an inline toggle.
     """
     if not hasattr(field, "as_widget"):
         return field
@@ -46,11 +69,8 @@ def inputclass_alpine(field, alpine_attrs: str = ""):
     attrs = dict(widget.attrs)
     attrs["class"] = css
     if alpine_attrs:
-        for raw in alpine_attrs.split(" "):
-            if not raw:
-                continue
-            name, _, value = raw.partition("=")
-            attrs[name.strip()] = value
+        name, _, value = alpine_attrs.partition("=")
+        attrs[name.strip()] = value
     return field.as_widget(widget=widget, attrs=attrs)
 
 
