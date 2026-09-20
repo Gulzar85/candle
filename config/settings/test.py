@@ -40,4 +40,3 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
-

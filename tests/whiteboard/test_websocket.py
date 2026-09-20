@@ -199,7 +199,10 @@ async def test_connect_wildcard_origin_allows_any_origin() -> None:
     comm = WebsocketCommunicator(
         APPLICATION,
         f"/ws/whiteboards/{w.partnership.public_id}/",
-        headers=[(b"origin", b"http://192.168.10.5:8000"), *(h for h in headers if h[0] != b"origin")],
+        headers=[
+            (b"origin", b"http://192.168.10.5:8000"),
+            *(h for h in headers if h[0] != b"origin"),
+        ],
     )
     with override_settings(WEBSOCKET_ALLOWED_ORIGINS=["*"]):
         connected, _ = await comm.connect()

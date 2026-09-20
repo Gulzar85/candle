@@ -249,7 +249,17 @@ SECURE_CSP = {
     # expressions with the Function constructor at runtime. This is a
     # documented exception; no other source allows unsafe-eval/unsafe-inline.
     "script-src": ["'self'", CSP.NONCE, CSP.UNSAFE_EVAL],
+    # style-src-attr is split out from style-src (which still governs our own
+    # nonce'd <style> blocks via the style-src-elem fallback) because Alpine's
+    # x-show/x-cloak/x-transition directives set the style="" attribute
+    # directly at runtime (el.style.display, transition properties, ...).
+    # That's a legitimate, unavoidable part of how Alpine works -- there is
+    # no nonce or hash that can cover a value computed at runtime -- and
+    # CSP enforces style-src-attr independently of style-src-elem, so this
+    # relaxation does not affect (or get neutralized by the nonce on)
+    # <style> elements at all.
     "style-src": ["'self'", CSP.NONCE],
+    "style-src-attr": [CSP.UNSAFE_INLINE],
     "img-src": ["'self'", "data:", "blob:"],
     "connect-src": ["'self'", "ws:", "wss:"],
     "worker-src": ["'self'"],
