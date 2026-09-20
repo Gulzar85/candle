@@ -475,6 +475,26 @@ function bindToolbar(): void {
   el("wb-retry-save").addEventListener("click", () => sync?.retryPending());
 }
 
+/**
+ * Anchor a `position: fixed` popover next to its trigger button.
+ *
+ * The toolbar rail scrolls (`overflow-y-auto`) when there isn't room for
+ * every tool, and a scrollable ancestor clips any `position: absolute`
+ * descendant to its own box -- there is no way to opt an absolutely
+ * positioned popover out of that with CSS alone. `fixed` positioning escapes
+ * it entirely, at the cost of computing the coordinates ourselves.
+ */
+function positionPopover(trigger: HTMLElement, popover: HTMLElement): void {
+  const rect = trigger.getBoundingClientRect();
+  const margin = 8;
+  // Popover is already visible (with `hidden` removed) by the time this
+  // runs, so offsetWidth/Height reflect its real rendered size.
+  const maxLeft = window.innerWidth - popover.offsetWidth - margin;
+  const maxTop = window.innerHeight - popover.offsetHeight - margin;
+  popover.style.left = `${Math.max(margin, Math.min(rect.right + margin, maxLeft))}px`;
+  popover.style.top = `${Math.max(margin, Math.min(rect.top, maxTop))}px`;
+}
+
 // ---------------------------------------------------------------------------
 // Stroke style popover (color / width / opacity) — one control reachable on
 // every breakpoint, replacing the old always-hidden-on-mobile palette row.
@@ -498,6 +518,7 @@ function bindStylePopover(): void {
     lastFocused = trigger as HTMLElement;
     popover.classList.remove("hidden");
     trigger.setAttribute("aria-expanded", "true");
+    positionPopover(trigger, popover);
     const first = popover.querySelector<HTMLElement>("[data-wb-color], input");
     first?.focus();
   };
@@ -745,6 +766,7 @@ function bindBoardMenu(): void {
     if (popover.classList.contains("hidden")) {
       popover.classList.remove("hidden");
       trigger.setAttribute("aria-expanded", "true");
+      positionPopover(trigger, popover);
     } else {
       closePopover();
     }

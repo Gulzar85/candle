@@ -19,7 +19,44 @@ document.addEventListener("DOMContentLoaded", () => {
   CandleApp.initLucide();
   registerServiceWorker();
   wireMessageDismiss();
+  wireAutoSubmit();
+  wireConfirm();
 });
+
+// Lucide icons in HTMX-swapped fragments need re-creating -- the library only
+// resolves `data-lucide` names for elements present at `createIcons()` time.
+document.addEventListener("htmx:afterSwap", () => {
+  CandleApp.initLucide();
+});
+
+/**
+ * `<input data-autosubmit>` submits its form on change. Declarative
+ * equivalent of `onchange="this.closest('form').requestSubmit()"` --
+ * production's script-src has no 'unsafe-inline', which (unlike a nonce,
+ * which only covers <script> elements) blocks inline event handler
+ * attributes outright, so that inline form only ever worked in dev.
+ */
+function wireAutoSubmit(): void {
+  document.addEventListener("change", (e) => {
+    const target = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-autosubmit]");
+    target?.closest("form")?.requestSubmit();
+  });
+}
+
+/**
+ * `<button data-confirm="...">` shows a confirm() dialog before its
+ * (native, non-HTMX) form submits, cancelling the submit on Cancel.
+ * Declarative equivalent of `onclick="return confirm(...)"`, blocked in
+ * production for the same inline-attribute reason as wireAutoSubmit.
+ */
+function wireConfirm(): void {
+  document.addEventListener("click", (e) => {
+    const target = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-confirm]");
+    if (target && !window.confirm(target.dataset.confirm || "Are you sure?")) {
+      e.preventDefault();
+    }
+  });
+}
 
 /**
  * Dismissible Django messages framework toasts (see components/_messages.html).

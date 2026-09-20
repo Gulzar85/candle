@@ -85,7 +85,7 @@
           {% else %}
           <input type="hidden" name="action" value="archive">
           <button type="submit" class="w-full text-sm text-muted-foreground hover:text-danger transition-colors flex items-center justify-center gap-1.5"
-                  onclick="return confirm('Archive this board? It becomes read-only for both of you until restored.');">
+                  data-confirm="Archive this board? It becomes read-only for both of you until restored.">
             <i data-lucide="archive" class="w-4 h-4" aria-hidden="true"></i>
             Archive board
           </button>

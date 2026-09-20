@@ -231,12 +231,3 @@
 </div>
 {% endblock content %}
 
-{% block extra_js %}
-<script>
-  document.addEventListener("htmx:afterSwap", function (event) {
-    if (window.CandleApp) {
-      window.CandleApp.initLucide();
-    }
-  });
-</script>
-{% endblock extra_js %}
